@@ -22,6 +22,8 @@ const FAR_RADIUS: f32 = 256.0;
 const PROP_RADIUS: f32 = 210.0;
 const GROUND_BIAS: i32 = 200;
 const UNDER_ROAD: f32 = 0.6;
+const NEAR_ROAD: f32 = 12.0;
+const NEAR_ROAD_RAMP: f32 = 0.7;
 const CACHE_LIMIT: usize = 60_000;
 
 #[derive(Clone, Copy)]
@@ -76,12 +78,17 @@ impl Landscape {
             .map(|road| (road.index as u32, road.distance))
             .unwrap_or((u32::MAX, f32::MAX));
         let mut height = terrain.height;
-        if road_index != u32::MAX {
-            let shoulder = track.shoulder(road_index as usize);
-            let reach = LATTICE * 1.5;
-            if road_distance < shoulder + reach {
-                height -= UNDER_ROAD
-                    * (1.0 - (road_distance - shoulder).max(0.0) / reach).clamp(0.0, 1.0);
+        if let Some(road) = terrain.road {
+            let half = track.half_width(road.index);
+            let shoulder = track.shoulder(road.index);
+            let road_y = track.ground(road.index, road.t, 0.0);
+            if road.distance < shoulder + NEAR_ROAD {
+                let ramp = road_y + 0.3 + (road.distance - shoulder).max(0.0) * NEAR_ROAD_RAMP;
+                height = height.min(ramp);
+            }
+            if road.distance < half + LATTICE {
+                height -=
+                    UNDER_ROAD * (1.0 - (road.distance - half).max(0.0) / LATTICE).clamp(0.0, 1.0);
             }
         }
         let vertex = Vertex {
@@ -247,7 +254,7 @@ impl Landscape {
                             -units(heights[index] - low) as i16,
                             units(dz) as i16,
                         );
-                        Point::new(local, color, (u, v))
+                        Point::new(local, lighting.lit_by_beam(color, x0 + dx, z0 + dz), (u, v))
                     };
                     let points = [
                         corner(2, 0.0, size, u0, v0),
@@ -384,7 +391,7 @@ impl Landscape {
                     width * scale,
                     height * scale,
                     right,
-                    lit,
+                    lighting.lit_by_beam(lit, x, z),
                 );
             }
         }

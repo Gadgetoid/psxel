@@ -46,6 +46,7 @@ pub struct Input {
     pub tapped: bool,
     pub gamepad: Option<crate::gamepad::Gamepad>,
     pub gamepad_pressed: Vec<usize>,
+    gamepad_rest: Option<[f32; 4]>,
     pointer_id: Option<u64>,
     mouse_down: bool,
     cursor: (f32, f32),
@@ -68,6 +69,12 @@ impl Input {
     fn poll_gamepad(&mut self) {
         let previous = self.gamepad;
         self.gamepad = crate::gamepad::poll();
+        if let Some(pad) = &mut self.gamepad {
+            let rest = *self.gamepad_rest.get_or_insert(pad.axes);
+            crate::gamepad::calibrate(pad, &rest);
+        } else {
+            self.gamepad_rest = None;
+        }
         if let Some(pad) = self.gamepad {
             for button in 0..pad.buttons.len() {
                 let was = previous.is_some_and(|old| old.held(button));

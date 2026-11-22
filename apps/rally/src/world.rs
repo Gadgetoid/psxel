@@ -51,6 +51,52 @@ pub struct Lighting {
     pub ambient: Rgb,
     pub fog: Rgb,
     pub sun_direction: [f32; 3],
+    pub sky_top: Rgb,
+    pub sky_horizon: Rgb,
+    pub daylight: f32,
+    pub headlight: Option<Headlight>,
+}
+
+#[derive(Clone, Copy)]
+pub struct Headlight {
+    pub x: f32,
+    pub z: f32,
+    pub forward: (f32, f32),
+    pub strength: f32,
+}
+
+const BEAM_COLOR: [f32; 3] = [235.0, 220.0, 175.0];
+const BEAM_RANGE: f32 = 60.0;
+
+impl Lighting {
+    pub fn beam(&self, x: f32, z: f32) -> f32 {
+        let Some(light) = self.headlight else {
+            return 0.0;
+        };
+        let (dx, dz) = (x - light.x, z - light.z);
+        let along = dx * light.forward.0 + dz * light.forward.1;
+        if along <= 0.5 || along > BEAM_RANGE {
+            return 0.0;
+        }
+        let lateral = (dx * light.forward.1 - dz * light.forward.0).abs();
+        let width = 1.4 + along * 0.42;
+        let spread = (1.0 - (lateral / width).powi(2)).max(0.0);
+        let falloff = (1.0 - along / BEAM_RANGE).powi(2);
+        let onset = (along / 3.0).min(1.0);
+        light.strength * spread * falloff * onset
+    }
+
+    pub fn lit_by_beam(&self, color: Rgb, x: f32, z: f32) -> Rgb {
+        let beam = self.beam(x, z);
+        if beam <= 0.0 {
+            return color;
+        }
+        [0, 1, 2].map(|c| (color[c] as f32 + BEAM_COLOR[c] * beam * 0.32).min(255.0) as u8)
+    }
+
+    pub fn shade(&self) -> f32 {
+        0.12 + 0.88 * self.daylight
+    }
 }
 
 impl World {
@@ -144,7 +190,7 @@ impl World {
     ) {
         let distance = Track::distance(from_index);
         let window = view_window(track, camera, from_index);
-        self.draw_sky(renderer, art, track, camera, distance);
+        self.draw_sky(renderer, art, track, camera, distance, lighting);
         self.landscape
             .draw(renderer, vram, atlas, art, track, camera, lighting);
         self.draw_ground(
@@ -167,20 +213,31 @@ impl World {
         track: &Track,
         camera: &Camera,
         distance: f32,
+        lighting: Lighting,
     ) {
         let biomes = &track.biomes;
-        let top = biomes.color(distance, |b| b.sky_top);
-        let horizon_color = biomes.color(distance, |b| b.sky_horizon);
-        let fog = biomes.color(distance, |b| b.fog);
+        let top = lighting.sky_top;
+        let horizon_color = lighting.sky_horizon;
+        let fog = lighting.fog;
         let horizon =
             (SCREEN_HEIGHT as f32 / 2.0 - camera.pitch.tan() * PROJECTION_H as f32) as i16;
         let horizon = horizon.clamp(-200, 400);
         let back = OT_SIZE - 1;
+        if lighting.daylight < 0.6 {
+            draw_stars(
+                renderer,
+                track.seed,
+                camera,
+                horizon,
+                1.0 - lighting.daylight / 0.6,
+            );
+        }
         let ground = lerp_rgb(
             biomes.color(distance, |b| b.ground_dark),
             biomes.color(distance, |b| b.ground_light),
             0.5,
         );
+        let ground = scale_rgb(ground, lighting.shade());
         let far_ground = lerp_rgb(fog, ground, 0.45);
         let near_ground = scale_rgb(ground, 0.8);
         let band = 20;
@@ -226,7 +283,7 @@ impl World {
         let (biome_a, biome_b, blend) = biomes.at(distance);
         let biome_index = if blend < 0.5 { biome_a } else { biome_b };
         if let Some(backdrop) = art.backdrop(biome_index) {
-            draw_backdrop(renderer, &backdrop);
+            draw_backdrop(renderer, &backdrop, lighting.shade());
             return;
         }
         let (style_a, style_b, t) = biomes.mix(distance, |b| b.horizon);
@@ -339,7 +396,7 @@ impl World {
                     (position.z - origin.z) as i16,
                 )
             };
-            let mut sections: Vec<Vec<(Vec3i16, f32, f32)>> = Vec::with_capacity(CHUNK + 1);
+            let mut sections: Vec<Vec<RibbonVertex>> = Vec::with_capacity(CHUNK + 1);
             let mut laterals: Vec<Vec<f32>> = Vec::with_capacity(CHUNK + 1);
             let mut centres: Vec<u16> = Vec::with_capacity(CHUNK + 1);
             for index in chunk_start..=chunk_end {
@@ -366,7 +423,7 @@ impl World {
                     let outward = lateral + lateral.signum();
                     let bank = track.side_height(index, outward) + sample.sink(outward) - height;
                     let shade = (slope_light - bank * 0.35).clamp(0.35, 1.1);
-                    row.push((local(x, sample.y + height, z), shade, height));
+                    row.push((local(x, sample.y + height, z), shade, height, x, z));
                     row_laterals.push(lateral);
                 }
                 centres.push(renderer.depth_of(local(sample.x, sample.y, sample.z)));
@@ -440,8 +497,8 @@ impl World {
                     };
                     let v1 = v0 + 31;
                     let corner = |r: usize, s: usize, u: u8, v: u8| {
-                        let (position, shade, _) = sections[r][s];
-                        let lit = light(shade * shade_scale);
+                        let (position, shade, _, x, z) = sections[r][s];
+                        let lit = lighting.lit_by_beam(light(shade * shade_scale), x, z);
                         let color = if textured {
                             lit
                         } else {
@@ -606,8 +663,8 @@ impl World {
                         width * scale,
                         height * scale,
                         right,
-                        lit,
-                        lit,
+                        lighting.lit_by_beam(lit, x, z),
+                        lighting.lit_by_beam(lit, x, z),
                     );
                 }
             }
@@ -918,7 +975,11 @@ impl World {
     ) {
         let right = (camera.yaw.cos(), -camera.yaw.sin());
         for particle in &self.particles {
-            let color = scale_rgb(lerp_rgb(particle.color, lighting.fog, 0.2), 0.55);
+            let color = scale_rgb(
+                lerp_rgb(particle.color, lighting.fog, 0.2),
+                0.55 * lighting.shade(),
+            );
+            let color = lighting.lit_by_beam(color, particle.position[0], particle.position[2]);
             let image = atlas.puff;
             renderer.set_object(
                 world_to_psx(
@@ -1163,7 +1224,7 @@ fn view_window(track: &Track, camera: &Camera, from_index: usize) -> (usize, usi
     )
 }
 
-fn draw_backdrop(renderer: &mut Renderer, image: &Image) {
+fn draw_backdrop(renderer: &mut Renderer, image: &Image, shade: f32) {
     const COPIES: usize = 8;
     const PANELS: usize = 8;
     const RADIUS: f32 = 28000.0;
@@ -1194,7 +1255,7 @@ fn draw_backdrop(renderer: &mut Renderer, image: &Image) {
             (panel * step, (panel + 1) * step - 1)
         };
         let (v0, v1) = (image.v, image.v + image.height - 1);
-        let color = [128, 128, 128];
+        let color = scale_rgb([128, 128, 128], shade);
         let points = [
             Point::new(Vec3i16::new(bx, top, bz), color, (ub, v0)),
             Point::new(Vec3i16::new(ax, top, az), color, (ua, v0)),
@@ -1207,10 +1268,51 @@ fn draw_backdrop(renderer: &mut Renderer, image: &Image) {
     renderer.force_bucket = None;
 }
 
+fn draw_stars(renderer: &mut Renderer, seed: u64, camera: &Camera, horizon: i16, amount: f32) {
+    let field = std::f32::consts::TAU;
+    let pixels_per_radian = PROJECTION_H as f32;
+    for star in 0..120u64 {
+        let azimuth = hash_float(seed ^ 0x57a5, star, 0) * field;
+        let altitude = 0.05 + hash_float(seed ^ 0x57a5, star, 1).powi(2) * 0.9;
+        let mut relative = azimuth - camera.yaw;
+        while relative > std::f32::consts::PI {
+            relative -= field;
+        }
+        while relative < -std::f32::consts::PI {
+            relative += field;
+        }
+        if relative.abs() > 0.8 {
+            continue;
+        }
+        let x = SCREEN_WIDTH as f32 / 2.0 + relative.tan() * pixels_per_radian;
+        let y = horizon as f32 - altitude.tan() * pixels_per_radian;
+        if y < 0.0 || y >= horizon as f32 {
+            continue;
+        }
+        let brightness = (hash_float(seed ^ 0x57a5, star, 2) * 0.7 + 0.3) * amount;
+        let value = (brightness * 230.0) as u8;
+        renderer.ot.add_at(
+            OT_SIZE - 1,
+            Primitive::Sprite {
+                x: x as i16,
+                y: y as i16,
+                width: 1,
+                height: 1,
+                u: 0,
+                v: 0,
+                color: [value, value, value.saturating_add(20)],
+                texture: None,
+                blend: Some(BlendMode::Add),
+            },
+        );
+    }
+}
+
+type RibbonVertex = (Vec3i16, f32, f32, f32, f32);
+
 type BoulderFace = (Vec<Vec3i16>, Vec<(u8, u8)>);
 
-pub fn sun_direction(heading_offset: f32) -> [f32; 3] {
-    let elevation: f32 = 0.7;
+pub fn sun_direction_at(heading_offset: f32, elevation: f32) -> [f32; 3] {
     [
         heading_offset.sin() * elevation.cos(),
         elevation.sin(),

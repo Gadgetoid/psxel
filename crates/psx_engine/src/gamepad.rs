@@ -2,6 +2,19 @@
 pub struct Gamepad {
     pub axes: [f32; 4],
     pub buttons: [f32; 17],
+    pub standard: bool,
+}
+
+const RESTING_TRIGGER: f32 = 0.5;
+
+pub fn calibrate(pad: &mut Gamepad, rest: &[f32; 4]) {
+    for (axis, &centre) in pad.axes.iter_mut().zip(rest) {
+        *axis = if centre.abs() > RESTING_TRIGGER {
+            0.0
+        } else {
+            (*axis - centre).clamp(-1.0, 1.0)
+        };
+    }
 }
 
 impl Gamepad {
@@ -49,7 +62,10 @@ pub fn poll() -> Option<Gamepad> {
         if !pad.connected() {
             continue;
         }
-        let mut state = Gamepad::default();
+        let mut state = Gamepad {
+            standard: pad.mapping() == web_sys::GamepadMappingType::Standard,
+            ..Default::default()
+        };
         for (index, axis) in pad.axes().iter().take(4).enumerate() {
             state.axes[index] = axis.as_f64().unwrap_or(0.0) as f32;
         }
@@ -71,4 +87,21 @@ pub fn poll() -> Option<Gamepad> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn poll() -> Option<Gamepad> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calibration_ignores_resting_triggers_and_centres_sticks() {
+        let mut pad = Gamepad {
+            axes: [0.1, -1.0, 0.5, 0.0],
+            ..Default::default()
+        };
+        calibrate(&mut pad, &[0.05, -1.0, 0.0, 0.0]);
+        assert!((pad.axes[0] - 0.05).abs() < 1e-6);
+        assert_eq!(pad.axes[1], 0.0);
+        assert_eq!(pad.axes[2], 0.5);
+    }
 }

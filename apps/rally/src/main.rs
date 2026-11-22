@@ -1,6 +1,7 @@
 mod art;
 mod biome;
 mod car;
+mod daytime;
 mod dial;
 mod font;
 mod hud;
@@ -26,7 +27,7 @@ use render::{Camera, Renderer, SCREEN_HEIGHT, SCREEN_WIDTH};
 use rng::Rng;
 use textures::Atlas;
 use track::{PaceNote, Track, CHECKPOINT_SPACING};
-use world::{sun_direction, Lighting, World};
+use world::{Lighting, World};
 
 const START_TIME: f32 = 75.0;
 const CHECKPOINT_BONUS: f32 = 32.0;
@@ -89,6 +90,9 @@ struct Rally {
     show_stats: bool,
     autopilot: bool,
     mode: Mode,
+    clock: f32,
+    pad_info: String,
+    headlight_override: Option<bool>,
     sound: sound::SoundSystem,
     last_throttle: f32,
     hide_hud: bool,
@@ -167,6 +171,9 @@ impl Rally {
             show_stats: false,
             autopilot: false,
             mode: Mode::RaceTheClock,
+            clock: 0.12,
+            pad_info: String::new(),
+            headlight_override: None,
             sound: sound::SoundSystem::default(),
             last_throttle: 0.0,
             hide_hud: false,
@@ -189,8 +196,10 @@ impl Rally {
         let mode = self.mode;
         let menu_selection = self.menu_selection;
         let sound = std::mem::take(&mut self.sound);
+        let clock = self.clock;
         *self = Self::new(seed);
         self.sound = sound;
+        self.clock = clock;
         self.best = best;
         self.show_stats = show_stats;
         self.autopilot = autopilot;
@@ -223,6 +232,15 @@ impl Rally {
             .map(|index| self.track.sample(index).curvature.abs())
             .fold(0.004, f32::max);
         let safe_speed = ((grip * 28.0 + 3.0) / curvature).sqrt() * 0.68;
+        let crest_ahead = self.track.upcoming_notes(anchor, 4).any(|note| {
+            matches!(note.kind, track::NoteKind::Crest | track::NoteKind::Jump)
+                && note.start < anchor + (speed.max(10.0) * 2.5 / track::SAMPLE) as usize
+        });
+        let safe_speed = if crest_ahead {
+            safe_speed.min(21.0)
+        } else {
+            safe_speed
+        };
         let throttle = ((safe_speed - speed) * 0.4).clamp(-1.0, 1.0);
         Controls {
             throttle,
@@ -456,13 +474,39 @@ impl Rally {
         }
     }
 
+    fn headlights_on(&self) -> bool {
+        self.headlight_override
+            .unwrap_or(daytime::phase(self.clock).daylight < 0.55)
+    }
+
     fn lighting(&self, distance: f32) -> Lighting {
         let biomes = &self.track.biomes;
+        let phase = daytime::phase(self.clock);
+        let sky = daytime::apply(
+            phase,
+            daytime::Sky {
+                top: biomes.color(distance, |b| b.sky_top),
+                horizon: biomes.color(distance, |b| b.sky_horizon),
+                fog: biomes.color(distance, |b| b.fog),
+                sun: biomes.color(distance, |b| b.sun),
+                ambient: biomes.color(distance, |b| b.ambient),
+            },
+        );
+        let headlight = self.headlights_on().then(|| world::Headlight {
+            x: self.car.x,
+            z: self.car.z,
+            forward: self.car.forward(),
+            strength: 1.0 - phase.daylight * 0.7,
+        });
         Lighting {
-            sun: biomes.color(distance, |b| b.sun),
-            ambient: biomes.color(distance, |b| b.ambient),
-            fog: biomes.color(distance, |b| b.fog),
-            sun_direction: sun_direction(0.9),
+            sun: sky.sun,
+            ambient: sky.ambient,
+            fog: sky.fog,
+            sun_direction: world::sun_direction_at(0.9, phase.elevation),
+            sky_top: sky.top,
+            sky_horizon: sky.horizon,
+            daylight: phase.daylight,
+            headlight,
         }
     }
 
@@ -637,12 +681,19 @@ impl Rally {
         }
         if self.show_stats {
             let text = format!(
-                "POLY {:4} SHIFT {} {:4.1}MS",
-                self.renderer.polygons,
-                self.renderer.ot.shift(),
-                self.render_ms
+                "{:3.1}MS T{:.2} I{} D{:.0} V{:.0}",
+                self.render_ms,
+                self.clock,
+                self.car.index,
+                self.track
+                    .terrain(self.car.x, self.car.z)
+                    .road
+                    .map(|road| road.distance)
+                    .unwrap_or(-1.0),
+                self.car.speed()
             );
             hud.text(6, 38, &text, GREEN);
+            hud.text(6, 48, &self.pad_info, GREEN);
         }
     }
 }
@@ -695,6 +746,23 @@ impl Game for Rally {
         }
         if input.just_pressed(Key::KeyM) {
             self.sound.muted = !self.sound.muted;
+        }
+        self.pad_info = input
+            .gamepad
+            .map(|pad| {
+                format!(
+                    "PAD {} {:+.1} {:+.1}",
+                    if pad.standard { "STD" } else { "RAW" },
+                    pad.axes[0],
+                    pad.axes[1]
+                )
+            })
+            .unwrap_or_default();
+        if input.just_pressed(Key::KeyL) {
+            self.headlight_override = Some(!self.headlights_on());
+        }
+        if input.just_pressed(Key::KeyT) {
+            self.clock = (self.clock + 0.125).rem_euclid(1.0);
         }
         if input.just_pressed(Key::KeyN) {
             self.sound.music = !self.sound.music;
@@ -825,7 +893,8 @@ impl Game for Rally {
             self.atlas
                 .update_biome_cluts(&mut self.vram, &self.track.biomes, distance);
         }
-        let fog = self.track.biomes.color(distance, |b| b.fog);
+        self.clock = (self.clock + DT / daytime::CYCLE_SECONDS).rem_euclid(1.0);
+        let fog = self.lighting(distance).fog;
         self.atlas.update_fog_cluts(&mut self.vram, fog);
         self.art.sheet.update_fog(&mut self.vram, fog);
     }
@@ -861,7 +930,26 @@ impl Game for Rally {
             lighting.ambient,
         );
         let shadow_color = scale_rgb([255, 255, 255], 0.22);
-        draw_shadow(&mut self.renderer, &self.car, &self.track, shadow_color);
+        draw_shadow(
+            &mut self.renderer,
+            &self.car,
+            &self.world,
+            &self.track,
+            shadow_color,
+        );
+        if let Some(beam) = lighting.headlight {
+            let braking = self.controls.throttle < -0.1 || self.controls.handbrake;
+            draw_lamps(
+                &mut self.renderer,
+                &self.atlas,
+                &self.world,
+                &self.track,
+                &self.car,
+                &self.camera,
+                beam.strength,
+                braking,
+            );
+        }
 
         let (a, b, t) = self.track.biomes.at(distance);
         let (weather, intensity) = if t < 0.5 {
@@ -904,7 +992,130 @@ impl Game for Rally {
     }
 }
 
-fn draw_shadow(renderer: &mut Renderer, car: &Car, track: &Track, color: [u8; 3]) {
+#[allow(clippy::too_many_arguments)]
+fn draw_lamps(
+    renderer: &mut Renderer,
+    atlas: &Atlas,
+    world: &World,
+    track: &Track,
+    car: &Car,
+    camera: &render::Camera,
+    strength: f32,
+    braking: bool,
+) {
+    use psx_math::{Mat3Fx12, Vec3i16};
+    use render::{units, world_to_psx, Point, Surface};
+    let puff = atlas.puff;
+    let (fx, fz) = car.forward();
+    let (rx, rz) = car.right();
+    let right = (camera.yaw.cos(), -camera.yaw.sin());
+    let base_y = car.y + 0.08 - car.suspension;
+    let fog_enabled = renderer.fog_enabled;
+    renderer.fog_enabled = false;
+    let glow = |renderer: &mut Renderer,
+                forward: f32,
+                side: f32,
+                up: f32,
+                size: f32,
+                color: [u8; 3],
+                bias: i32| {
+        let x = car.x + fx * forward + rx * side;
+        let z = car.z + fz * forward + rz * side;
+        renderer.set_object(world_to_psx(x, base_y + up, z), Mat3Fx12::IDENTITY);
+        let half = size * 0.5;
+        let (dx, dz) = (units(right.0 * half) as i16, units(right.1 * half) as i16);
+        let h = units(half) as i16;
+        let (u0, v0, u1, v1) = (puff.u, puff.v, puff.u + 15, puff.v + 15);
+        let points = [
+            Point::new(Vec3i16::new(-dx, -h, -dz), color, (u0, v0)),
+            Point::new(Vec3i16::new(dx, -h, dz), color, (u1, v0)),
+            Point::new(Vec3i16::new(-dx, h, -dz), color, (u0, v1)),
+            Point::new(Vec3i16::new(dx, h, dz), color, (u1, v1)),
+        ];
+        renderer.polygon(
+            &points,
+            Surface::textured(puff.texture).blended(psx_prim::BlendMode::Add),
+            bias,
+            0,
+        );
+    };
+    let white = render_scale([255, 240, 200], strength);
+    for side in [-0.27f32, 0.27] {
+        glow(renderer, 2.12, side, 0.55, 0.55, white, -430);
+        glow(renderer, 2.16, side, 0.31, 0.55, white, -430);
+    }
+    for side in [-0.5f32, 0.5] {
+        glow(renderer, 2.02, side, 0.42, 0.5, white, -430);
+    }
+    let tail = if braking {
+        [255, 40, 30]
+    } else {
+        [150, 20, 15]
+    };
+    for side in [-0.72f32, 0.72] {
+        glow(
+            renderer,
+            -2.02,
+            side,
+            0.55,
+            if braking { 0.45 } else { 0.28 },
+            render_scale(tail, strength.max(0.4)),
+            -470,
+        );
+    }
+    let pool = |forward: f32, side: f32| {
+        let x = car.x + fx * forward + rx * side;
+        let z = car.z + fz * forward + rz * side;
+        (x, world.landscape.height_at(track, x, z) + 0.08, z)
+    };
+    let origin = world_to_psx(car.x, car.y, car.z);
+    renderer.set_object(origin, Mat3Fx12::IDENTITY);
+    let corners = [
+        pool(22.0, -8.0),
+        pool(22.0, 8.0),
+        pool(3.0, -1.4),
+        pool(3.0, 1.4),
+    ];
+    let near = render_scale([60, 55, 42], strength);
+    let far = render_scale([8, 7, 5], strength);
+    let colors = [far, far, near, near];
+    let uvs = [
+        (puff.u, puff.v),
+        (puff.u + 15, puff.v),
+        (puff.u + 4, puff.v + 15),
+        (puff.u + 11, puff.v + 15),
+    ];
+    let points: Vec<Point> = corners
+        .iter()
+        .zip(uvs)
+        .zip(colors)
+        .map(|((&(x, y, z), uv), color)| {
+            let position = world_to_psx(x, y, z);
+            Point::new(
+                Vec3i16::new(
+                    (position.x - origin.x) as i16,
+                    (position.y - origin.y) as i16,
+                    (position.z - origin.z) as i16,
+                ),
+                color,
+                uv,
+            )
+        })
+        .collect();
+    renderer.polygon(
+        &points,
+        Surface::textured(puff.texture).blended(psx_prim::BlendMode::Add),
+        -330,
+        2,
+    );
+    renderer.fog_enabled = fog_enabled;
+}
+
+fn render_scale(color: [u8; 3], amount: f32) -> [u8; 3] {
+    color.map(|c| (c as f32 * amount.clamp(0.0, 1.0)) as u8)
+}
+
+fn draw_shadow(renderer: &mut Renderer, car: &Car, world: &World, track: &Track, color: [u8; 3]) {
     use psx_math::{Mat3Fx12, Vec3i16};
     use render::{world_to_psx, Point, Surface};
     let (fx, fz) = car.forward();
@@ -912,8 +1123,15 @@ fn draw_shadow(renderer: &mut Renderer, car: &Car, track: &Track, color: [u8; 3]
     let corner = |forward: f32, side: f32| {
         let x = car.x + fx * forward + rx * side;
         let z = car.z + fz * forward + rz * side;
-        let (index, along, lateral) = track.locate(x, z, car.index);
-        (x, track.ground(index, along, lateral) + 0.05, z)
+        (
+            x,
+            world
+                .landscape
+                .height_at(track, x, z)
+                .max(track.terrain(x, z).height)
+                + 0.06,
+            z,
+        )
     };
     let origin = world_to_psx(car.x, car.y, car.z);
     renderer.set_object(origin, Mat3Fx12::IDENTITY);
