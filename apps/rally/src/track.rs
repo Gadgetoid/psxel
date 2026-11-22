@@ -36,6 +36,7 @@ pub enum NoteKind {
     Turn { direction: Direction, severity: u8 },
     Crest,
     Jump,
+    Ford,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +54,7 @@ impl PaceNote {
         matches!(
             self.kind,
             NoteKind::Jump
+                | NoteKind::Ford
                 | NoteKind::Turn {
                     severity: 0..=1,
                     ..
@@ -93,6 +95,7 @@ impl PaceNote {
             }
             NoteKind::Crest => words.push("OVER CREST".into()),
             NoteKind::Jump => words.push("JUMP!".into()),
+            NoteKind::Ford => words.push("WATER SPLASH".into()),
         }
         words.join(" ")
     }
@@ -147,6 +150,48 @@ struct Bump {
     width: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct StreamPoint {
+    pub x: f32,
+    pub z: f32,
+    pub surface: f32,
+    pub width: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct Ford {
+    pub x: f32,
+    pub z: f32,
+    pub level: f32,
+    pub crossing: usize,
+    pub path: Vec<StreamPoint>,
+    bounds: (f32, f32, f32, f32),
+}
+
+struct StreamHit {
+    distance: f32,
+    surface: f32,
+    width: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Puddle {
+    pub x: f32,
+    pub z: f32,
+    pub y: f32,
+    pub heading: f32,
+    pub radius: f32,
+}
+
+const FORD_DEPTH: f32 = 1.2;
+const FORD_WIDTH: f32 = 8.0;
+const FORD_WATER: f32 = 0.35;
+pub const STREAM_HALF_WIDTH: f32 = 4.5;
+const STREAM_STEP: f32 = 6.0;
+const STREAM_STEPS: usize = 30;
+const STREAM_BED: f32 = 0.6;
+const STREAM_BANK: f32 = 12.0;
+
 pub struct Track {
     pub seed: u64,
     pub samples: Vec<Sample>,
@@ -154,6 +199,7 @@ pub struct Track {
     pub biomes: BiomeSchedule,
     rng: Rng,
     bumps: Vec<Bump>,
+    pub fords: Vec<Ford>,
     general_heading: f32,
     curvature: f32,
     phases: [f32; 3],
@@ -204,6 +250,16 @@ pub struct Character {
     pub valley: f32,
 }
 
+fn wrap_angle(mut angle: f32) -> f32 {
+    while angle > std::f32::consts::PI {
+        angle -= std::f32::consts::TAU;
+    }
+    while angle < -std::f32::consts::PI {
+        angle += std::f32::consts::TAU;
+    }
+    angle
+}
+
 fn severity_radius(severity: u8) -> f32 {
     [13.0, 26.0, 40.0, 60.0, 95.0, 150.0, 260.0][severity as usize]
 }
@@ -224,6 +280,7 @@ impl Track {
             biomes: BiomeSchedule::new(seed),
             rng,
             bumps: Vec::new(),
+            fords: Vec::new(),
             general_heading: 0.0,
             curvature: 0.0,
             phases,
@@ -545,7 +602,41 @@ impl Track {
                     into: false,
                 });
             }
+            let center = (start + 4..start + length.saturating_sub(4).max(5))
+                .min_by(|&a, &b| {
+                    self.elevation(Self::distance(a))
+                        .total_cmp(&self.elevation(Self::distance(b)))
+                })
+                .unwrap_or(start + length / 2);
+            let ford = !bump
+                && length >= 12
+                && self
+                    .biomes
+                    .mix(Self::distance(center), |biome| biome.weather)
+                    .0
+                    != crate::biome::Weather::Dust
+                && crate::rng::hash_float(self.seed ^ 0xf04d, start as u64, 0) < 0.35;
+            if ford {
+                self.bumps.push(Bump {
+                    center: Self::distance(center),
+                    height: -FORD_DEPTH,
+                    width: FORD_WIDTH,
+                });
+                self.notes.push(PaceNote {
+                    start: center.saturating_sub(4),
+                    end: center,
+                    kind: NoteKind::Ford,
+                    long: false,
+                    tightens: false,
+                    into: false,
+                });
+            }
             self.push_samples(length, 0.0);
+            if ford {
+                let sample = self.samples[center];
+                let ford = self.build_stream(sample, sample.y + FORD_WATER, self.fords.len());
+                self.fords.push(ford);
+            }
             return;
         }
 
@@ -597,6 +688,198 @@ impl Track {
     }
 
     pub fn terrain(&self, x: f32, z: f32) -> Terrain {
+        let mut terrain = self.terrain_raw(x, z);
+        for ford in &self.fords {
+            let Some(hit) = Self::stream_hit(ford, x, z, STREAM_BANK) else {
+                continue;
+            };
+            let bed = hit.surface - STREAM_BED;
+            if terrain.height > bed {
+                let off_road = terrain.road.map_or(1.0, |road| {
+                    let half = self.half_width(road.index);
+                    ((road.distance - half) / 3.0).clamp(0.0, 1.0)
+                });
+                let wall = ((hit.distance - hit.width - 2.0) / (STREAM_BANK - 2.0)).clamp(0.0, 1.0);
+                let weight = (1.0 - wall * wall * (3.0 - 2.0 * wall)) * off_road;
+                terrain.height += (bed - terrain.height) * weight;
+            }
+        }
+        terrain
+    }
+
+    fn stream_hit(ford: &Ford, x: f32, z: f32, margin: f32) -> Option<StreamHit> {
+        let reach = STREAM_HALF_WIDTH + margin;
+        let (min_x, min_z, max_x, max_z) = ford.bounds;
+        if x < min_x - reach || x > max_x + reach || z < min_z - reach || z > max_z + reach {
+            return None;
+        }
+        let mut best: Option<StreamHit> = None;
+        for pair in ford.path.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let (sx, sz) = (b.x - a.x, b.z - a.z);
+            let length = sx * sx + sz * sz;
+            let t = (((x - a.x) * sx + (z - a.z) * sz) / length.max(1e-6)).clamp(0.0, 1.0);
+            let distance = (x - a.x - sx * t).hypot(z - a.z - sz * t);
+            if best.as_ref().is_none_or(|hit| distance < hit.distance) {
+                best = Some(StreamHit {
+                    distance,
+                    surface: a.surface + (b.surface - a.surface) * t,
+                    width: a.width + (b.width - a.width) * t,
+                });
+            }
+        }
+        best.filter(|hit| hit.distance < hit.width + margin)
+    }
+
+    fn build_stream(&self, sample: Sample, level: f32, number: usize) -> Ford {
+        let (rx, rz) = sample.right();
+        let raw = |x: f32, z: f32| self.terrain_raw(x, z).height;
+        let probe = |sign: f32| raw(sample.x + rx * 30.0 * sign, sample.z + rz * 30.0 * sign);
+        let up_sign = if probe(1.0) > probe(-1.0) { 1.0 } else { -1.0 };
+        let walk = |sign: f32, uphill: bool| {
+            let initial = (rx * sign).atan2(rz * sign);
+            let mut angle = initial;
+            let (mut x, mut z) = (sample.x, sample.z);
+            let mut previous = level;
+            let mut points = Vec::new();
+            for step in 0..STREAM_STEPS {
+                let gx = raw(x + 2.0, z) - raw(x - 2.0, z);
+                let gz = raw(x, z + 2.0) - raw(x, z - 2.0);
+                let pull = if uphill { 1.0 } else { -1.0 };
+                let slope = gx.hypot(gz) / 4.0;
+                if slope > 0.005 {
+                    let target = (gx * pull).atan2(gz * pull);
+                    let turn = wrap_angle(target - angle).clamp(-0.3, 0.3);
+                    angle += turn * (slope * 8.0).min(1.0);
+                }
+                let wander = crate::rng::hash_float(self.seed ^ 0x57e4, number as u64, step as u64);
+                angle += (wander - 0.5) * 0.4;
+                if step < 4 {
+                    angle = initial + wrap_angle(angle - initial).clamp(-0.4, 0.4);
+                }
+                x += angle.sin() * STREAM_STEP;
+                z += angle.cos() * STREAM_STEP;
+                let terrain = self.terrain_raw(x, z);
+                if step > 2
+                    && terrain
+                        .road
+                        .is_some_and(|road| road.distance < self.shoulder(road.index) + 4.0)
+                {
+                    break;
+                }
+                let ground = terrain.height + 0.2;
+                let surface = if step < 2 {
+                    level
+                } else if uphill {
+                    if ground < previous - 0.5 {
+                        break;
+                    }
+                    previous.max(ground)
+                } else {
+                    if ground > previous + 3.0 {
+                        break;
+                    }
+                    previous.min(ground)
+                };
+                previous = surface;
+                let progress = step as f32 / STREAM_STEPS as f32;
+                let width = if uphill {
+                    STREAM_HALF_WIDTH * (1.0 - 0.75 * progress)
+                } else {
+                    STREAM_HALF_WIDTH * (1.0 + 0.3 * progress)
+                };
+                points.push(StreamPoint {
+                    x,
+                    z,
+                    surface,
+                    width,
+                });
+            }
+            points
+        };
+        let mut path = walk(up_sign, true);
+        path.reverse();
+        let crossing = path.len();
+        path.push(StreamPoint {
+            x: sample.x,
+            z: sample.z,
+            surface: level,
+            width: STREAM_HALF_WIDTH,
+        });
+        path.extend(walk(-up_sign, false));
+        let bounds = path.iter().fold(
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+            |(min_x, min_z, max_x, max_z), point| {
+                (
+                    min_x.min(point.x),
+                    min_z.min(point.z),
+                    max_x.max(point.x),
+                    max_z.max(point.z),
+                )
+            },
+        );
+        Ford {
+            x: sample.x,
+            z: sample.z,
+            level,
+            crossing,
+            path,
+            bounds,
+        }
+    }
+
+    pub fn water_at(&self, x: f32, z: f32) -> Option<f32> {
+        self.fords
+            .iter()
+            .find_map(|ford| Self::stream_hit(ford, x, z, 0.0))
+            .map(|hit| hit.surface)
+    }
+
+    pub fn puddle(&self, index: usize) -> Option<Puddle> {
+        if index < 40 || index + 1 >= self.samples.len() {
+            return None;
+        }
+        let key = crate::rng::hash(self.seed ^ 0x9dd1e, index as u64, 0);
+        let roll = crate::rng::hash_float(key, 1, 0);
+        let weather = self
+            .biomes
+            .mix(Self::distance(index), |biome| biome.weather)
+            .0;
+        let chance = match weather {
+            crate::biome::Weather::Rain => 0.09,
+            crate::biome::Weather::Clear => 0.015,
+            _ => 0.0,
+        };
+        if roll >= chance {
+            return None;
+        }
+        let sample = self.samples[index];
+        let half = self.half_width(index);
+        let radius = 0.7 + crate::rng::hash_float(key, 2, 0) * 1.1;
+        let lateral = (crate::rng::hash_float(key, 3, 0) * 2.0 - 1.0) * (half - radius).max(0.0);
+        let (x, z) = sample.offset(lateral);
+        Some(Puddle {
+            x,
+            z,
+            y: self.ground(index, 0.0, lateral),
+            heading: sample.heading,
+            radius,
+        })
+    }
+
+    pub fn puddle_at(&self, index: usize, x: f32, z: f32) -> bool {
+        (index.saturating_sub(1)..=index + 1).any(|index| {
+            self.puddle(index).is_some_and(|puddle| {
+                let (dx, dz) = (x - puddle.x, z - puddle.z);
+                let (sin, cos) = puddle.heading.sin_cos();
+                let along = (dx * sin + dz * cos) / 1.4;
+                let across = dx * cos - dz * sin;
+                along * along + across * across < puddle.radius * puddle.radius
+            })
+        })
+    }
+
+    fn terrain_raw(&self, x: f32, z: f32) -> Terrain {
         let (cx, cz) = Self::cell(x, z);
         let mut points: Vec<RoadPoint> = Vec::new();
         for gx in cx - GRID_REACH..=cx + GRID_REACH {
@@ -808,6 +1091,49 @@ mod tests {
         assert_eq!(a.samples.len(), b.samples.len());
         assert_eq!(a.samples[1500].x, b.samples[1500].x);
         assert_eq!(a.notes, b.notes);
+    }
+
+    #[test]
+    fn fords_flood_the_road_and_carve_a_channel() {
+        let mut track = Track::new(11);
+        track.ensure(6000);
+        assert!(track.fords.len() > 3);
+        for ford in &track.fords {
+            let road = track.terrain(ford.x, ford.z).road.unwrap();
+            let road_y = track.ground(road.index, road.t, 0.0);
+            assert!(ford.level > road_y + 0.2);
+            assert_eq!(track.water_at(ford.x, ford.z), Some(ford.level));
+            assert!(ford.path.len() > 4);
+            for point in ford.path.iter().skip(ford.crossing + 3) {
+                let bed = track.terrain(point.x, point.z).height;
+                assert!(bed < point.surface, "{bed} {}", point.surface);
+            }
+            for pair in ford.path[ford.crossing..].windows(2) {
+                assert!(pair[1].surface <= pair[0].surface);
+            }
+            for pair in ford.path[..=ford.crossing].windows(2) {
+                assert!(pair[1].surface <= pair[0].surface);
+            }
+            assert!(track
+                .notes
+                .iter()
+                .any(|note| note.kind == NoteKind::Ford && note.end <= road.index + 1));
+        }
+    }
+
+    #[test]
+    fn puddles_sit_on_the_road() {
+        let mut track = Track::new(5);
+        track.ensure(4000);
+        let puddles: Vec<(usize, Puddle)> = (0..3900)
+            .filter_map(|index| track.puddle(index).map(|puddle| (index, puddle)))
+            .collect();
+        assert!(puddles.len() > 10);
+        for (index, puddle) in puddles {
+            let (_, _, lateral) = track.locate(puddle.x, puddle.z, index);
+            assert!(lateral.abs() <= track.half_width(index) + 0.01);
+            assert!(track.puddle_at(index, puddle.x, puddle.z));
+        }
     }
 
     #[test]

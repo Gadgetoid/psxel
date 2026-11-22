@@ -231,10 +231,20 @@ impl Rally {
         let curvature = horizon
             .map(|index| self.track.sample(index).curvature.abs())
             .fold(0.004, f32::max);
-        let safe_speed = ((grip * 28.0 + 3.0) / curvature).sqrt() * 0.68;
-        let crest_ahead = self.track.upcoming_notes(anchor, 4).any(|note| {
-            matches!(note.kind, track::NoteKind::Crest | track::NoteKind::Jump)
-                && note.start < anchor + (speed.max(10.0) * 2.5 / track::SAMPLE) as usize
+        let safe_speed = ((grip * 28.0 + 3.0) / curvature).sqrt() * 0.76;
+        let notes: Vec<&PaceNote> = self.track.upcoming_notes(anchor, 5).collect();
+        let crest_ahead = notes.windows(2).any(|pair| {
+            let (crest, after) = (pair[0], pair[1]);
+            matches!(crest.kind, track::NoteKind::Crest | track::NoteKind::Jump)
+                && crest.start < anchor + (speed.max(10.0) * 2.5 / track::SAMPLE) as usize
+                && matches!(
+                    after.kind,
+                    track::NoteKind::Turn {
+                        severity: 0..=3,
+                        ..
+                    }
+                )
+                && after.start < crest.end + 20
         });
         let safe_speed = if crest_ahead {
             safe_speed.min(21.0)
@@ -354,6 +364,42 @@ impl Rally {
                     (-self.car.velocity.0, -self.car.velocity.1),
                     dust,
                     kick * 0.25,
+                );
+            }
+        }
+
+        let spray = biome::lerp_rgb(
+            self.track.biomes.color(distance, |b| b.sky_horizon),
+            [235, 240, 245],
+            0.5,
+        );
+        if events.splash > 2.0 {
+            self.sound.trigger(
+                sound::Effect::Splash,
+                (events.splash / 18.0).min(1.0),
+                0.9 + (self.frame % 5) as f32 * 0.05,
+            );
+        }
+        if self.car.water_depth > 0.1 && speed.abs() > 4.0 && self.frame.is_multiple_of(20) {
+            self.sound
+                .trigger(sound::Effect::Splash, (speed.abs() / 40.0).min(0.6), 1.1);
+        }
+        if self.car.wet && speed.abs() > 3.0 {
+            let (fx, fz) = self.car.forward();
+            let (rx, rz) = self.car.right();
+            let amount =
+                speed.abs() * 0.05 * (1.0 + self.car.water_depth * 6.0) + events.splash * 0.15;
+            for side in [-0.8f32, 0.8] {
+                let position = [
+                    self.car.x + fx * 1.2 + rx * side,
+                    self.car.y,
+                    self.car.z + fz * 1.2 + rz * side,
+                ];
+                self.world.spawn_dust(
+                    position,
+                    (self.car.velocity.0 * 0.5, self.car.velocity.1 * 0.5),
+                    spray,
+                    amount,
                 );
             }
         }
@@ -1177,6 +1223,34 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn car_drives_out_of_stream() {
+        let mut track = Track::new(8);
+        track.ensure(800);
+        let ford = track.fords[0].clone();
+        let mut car = Car::new(&track);
+        let point = ford.path[ford.crossing + 4];
+        let next = ford.path[ford.crossing + 5];
+        let (x, z) = (point.x, point.z);
+        car.x = x;
+        car.z = z;
+        car.y = track.terrain(x, z).height;
+        car.heading = (next.x - x).atan2(next.z - z);
+        car.index = track.terrain(x, z).road.unwrap().index;
+        let controls = Controls {
+            throttle: 1.0,
+            steer: 0.0,
+            handbrake: false,
+        };
+        let mut deepest = 0.0f32;
+        for _ in 0..180 {
+            car.update(controls, &mut track);
+            deepest = deepest.max(car.water_depth);
+        }
+        assert!(deepest > 0.2, "{deepest}");
+        assert!(car.speed() > 9.0, "{}", car.speed());
+    }
 
     #[test]
     fn autopilot_soak_keeps_car_and_camera_sane() {

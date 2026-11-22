@@ -274,7 +274,7 @@ impl Hud<'_> {
                 severity,
             } => (severity as usize, direction.sign() < 0.0),
             NoteKind::Crest => (7, false),
-            NoteKind::Jump => (8, false),
+            NoteKind::Jump | NoteKind::Ford => (8, false),
         };
         let color = if note.caution() {
             RED

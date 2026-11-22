@@ -43,6 +43,7 @@ pub enum Effect {
     Thud,
     Pop,
     Call,
+    Splash,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -70,6 +71,7 @@ struct Bank {
     thud: SoundId,
     pop: SoundId,
     call: SoundId,
+    splash: SoundId,
     music: SoundId,
 }
 
@@ -124,6 +126,7 @@ impl SoundSystem {
             thud: audio.load_wav(asset!("rally_thud")),
             pop: audio.load_wav(asset!("rally_pop")),
             call: audio.load_wav(asset!("rally_call")),
+            splash: audio.load_wav(asset!("rally_splash")),
             music: {
                 let stream =
                     psx_spu::decode_file(include_bytes!("../../../assets/sounds/rally_music.spu"))
@@ -251,6 +254,7 @@ impl SoundSystem {
                 Effect::Thud => bank.thud,
                 Effect::Pop => bank.pop,
                 Effect::Call => bank.call,
+                Effect::Splash => bank.splash,
             };
             audio.play(sound, volume, rate);
         }

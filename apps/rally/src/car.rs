@@ -39,6 +39,7 @@ pub struct Events {
     pub impact: f32,
     pub landed: f32,
     pub sliding: f32,
+    pub splash: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +69,8 @@ pub struct Car {
     pub slide: f32,
     flick: f32,
     last_throttle: f32,
+    pub water_depth: f32,
+    pub wet: bool,
 }
 
 impl Car {
@@ -99,6 +102,8 @@ impl Car {
             slide: 0.0,
             flick: 0.0,
             last_throttle: 0.0,
+            water_depth: 0.0,
+            wet: false,
         }
     }
 
@@ -164,6 +169,23 @@ impl Car {
         let off_road_drag = track.biomes.scalar(self.distance(), |biome| {
             crate::biome::ground_traits(biome.ground).1
         });
+        self.water_depth = track
+            .water_at(self.x, self.z)
+            .map(|level| (level - self.y).max(0.0))
+            .unwrap_or(0.0);
+        let puddle = self.ground == Ground::Road && track.puddle_at(road_index, self.x, self.z);
+        let wet = self.water_depth > 0.05 || (puddle && !self.airborne);
+        if wet && !self.wet {
+            let speed = self.velocity.0.hypot(self.velocity.1);
+            events.splash = speed
+                * if self.water_depth > 0.05 {
+                    1.0 + self.water_depth * 2.0
+                } else {
+                    0.4
+                };
+        }
+        self.wet = wet;
+        let wet_grip = if wet { 0.75 } else { 1.0 };
         let (grip, turn_grip) = match self.ground {
             Ground::Road => (biome_grip, biome_grip),
             Ground::Shoulder => (
@@ -172,11 +194,14 @@ impl Car {
             ),
             Ground::Rough => (off_road_grip, off_road_grip + 0.15),
         };
+        let (grip, turn_grip) = (grip * wet_grip, turn_grip * wet_grip);
         let rolling_drag: f32 = match self.ground {
             Ground::Road => 0.4 + (1.0 - biome_grip) * 1.2,
             Ground::Shoulder => 1.2 + off_road_drag * 0.3,
             Ground::Rough => off_road_drag,
-        };
+        } + self.water_depth.min(0.4)
+            * (4.0 + (self.velocity.0.hypot(self.velocity.1) - 10.0).max(0.0) * 2.0)
+            + if puddle { 0.6 } else { 0.0 };
         let traction = 0.35 + 0.65 * (grip / 0.8).min(1.0);
 
         let steer_rate = if controls.steer.abs() > self.steer.abs() {

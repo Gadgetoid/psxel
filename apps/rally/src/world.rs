@@ -20,6 +20,9 @@ const CHUNK: usize = 8;
 const PRECIPITATION_DROPS: usize = 240;
 const PRECIPITATION_RADIUS: f32 = 24.0;
 const GROUND_BIAS: i32 = 160;
+const WATER_BIAS: i32 = -250;
+const STREAM_BIAS: i32 = 60;
+const WATER_DRAW_RANGE: f32 = 260.0;
 const ROAD_BIAS: i32 = -180;
 
 pub struct Particle {
@@ -196,6 +199,7 @@ impl World {
         self.draw_ground(
             renderer, vram, atlas, art, track, from_index, window, lighting,
         );
+        self.draw_water(renderer, track, camera, window, lighting);
         self.draw_props(renderer, atlas, art, track, camera, window, lighting);
         let boulder =
             |renderer: &mut Renderer, image: &Image, base: [f32; 3], scale: f32, key: u64| {
@@ -204,6 +208,89 @@ impl World {
         self.landscape
             .draw_props(renderer, art, atlas, track, camera, lighting, &boulder);
         self.draw_particles(renderer, atlas, camera, lighting);
+    }
+
+    fn draw_water(
+        &self,
+        renderer: &mut Renderer,
+        track: &Track,
+        camera: &Camera,
+        window: (usize, usize),
+        lighting: Lighting,
+    ) {
+        let surface = Surface::gouraud().blended(BlendMode::Half);
+        let shine = lerp_rgb(lighting.sky_horizon, lighting.sky_top, 0.3);
+        let (start, end) = window;
+        for index in start..end {
+            let Some(puddle) = track.puddle(index) else {
+                continue;
+            };
+            renderer.set_object(
+                world_to_psx(puddle.x, puddle.y + 0.03, puddle.z),
+                Mat3Fx12::IDENTITY,
+            );
+            let (sin, cos) = puddle.heading.sin_cos();
+            let rim = |step: usize| {
+                let angle = step as f32 / 8.0 * std::f32::consts::TAU;
+                let along = angle.cos() * puddle.radius * 1.4;
+                let across = angle.sin() * puddle.radius;
+                let x = sin * along + cos * across;
+                let z = cos * along - sin * across;
+                Point::new(
+                    Vec3i16::new(units(x) as i16, 0, units(z) as i16),
+                    lighting.lit_by_beam(shine, puddle.x + x, puddle.z + z),
+                    (0, 0),
+                )
+            };
+            let centre = Point::new(
+                Vec3i16::new(0, 0, 0),
+                lighting.lit_by_beam(shine, puddle.x, puddle.z),
+                (0, 0),
+            );
+            for step in 0..8 {
+                renderer.polygon(&[centre, rim(step + 1), rim(step)], surface, WATER_BIAS, 0);
+            }
+        }
+
+        let stream = lerp_rgb(shine, [40, 70, 80], 0.35);
+        for ford in &track.fords {
+            if (ford.x - camera.x).hypot(ford.z - camera.z) > WATER_DRAW_RANGE {
+                continue;
+            }
+            renderer.set_object(world_to_psx(ford.x, ford.level, ford.z), Mat3Fx12::IDENTITY);
+            let path = &ford.path;
+            let edges = |index: usize| {
+                let point = path[index];
+                let before = path[index.saturating_sub(1)];
+                let after = path[(index + 1).min(path.len() - 1)];
+                let (dx, dz) = (after.x - before.x, after.z - before.z);
+                let length = dx.hypot(dz).max(1e-3);
+                let (nx, nz) = (dz / length, -dx / length);
+                let width = point.width + 1.5;
+                [-1.0f32, 1.0].map(|side| {
+                    let (x, z) = (point.x + nx * width * side, point.z + nz * width * side);
+                    Point::new(
+                        Vec3i16::new(
+                            units(x - ford.x) as i16,
+                            -units(point.surface - ford.level) as i16,
+                            units(z - ford.z) as i16,
+                        ),
+                        lighting.lit_by_beam(stream, x, z),
+                        (0, 0),
+                    )
+                })
+            };
+            for index in 1..path.len() {
+                let (a, b) = (edges(index - 1), edges(index));
+                let crossing = index.abs_diff(ford.crossing) <= 1;
+                renderer.polygon(
+                    &[a[0], a[1], b[0], b[1]],
+                    surface,
+                    if crossing { WATER_BIAS } else { STREAM_BIAS },
+                    0,
+                );
+            }
+        }
     }
 
     fn draw_sky(
