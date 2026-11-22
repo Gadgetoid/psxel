@@ -2,7 +2,7 @@ use psx_math::{Mat3Fx12, Vec3i16, Vec3i32};
 use psx_prim::Texture;
 
 use crate::biome::Rgb;
-use crate::livery::{CarAtlas, WHEEL_Z};
+use crate::livery::{CarAtlas, SIDE_LENGTH, WHEEL_Z};
 use crate::render::{angle, world_to_psx, Point, Renderer, Surface};
 use crate::textures::Image;
 use crate::track::Track;
@@ -60,6 +60,9 @@ pub struct Car {
     pub roll: f32,
     pub suspension: f32,
     pub suspension_pitch: f32,
+    heave_velocity: f32,
+    pub slope_pitch: f32,
+    pub slope_roll: f32,
     pub wheel_spin: f32,
     pub slide: f32,
     flick: f32,
@@ -88,6 +91,9 @@ impl Car {
             roll: 0.0,
             suspension: 0.0,
             suspension_pitch: 0.0,
+            heave_velocity: 0.0,
+            slope_pitch: 0.0,
+            slope_roll: 0.0,
             wheel_spin: 0.0,
             slide: 0.0,
             flick: 0.0,
@@ -305,7 +311,7 @@ impl Car {
             self.y += self.vertical_speed * DT;
             if self.y <= ground {
                 events.landed = -self.vertical_speed;
-                self.suspension = (-self.vertical_speed * 0.02).min(0.25);
+                self.heave_velocity += (-self.vertical_speed * 0.18).min(2.5);
                 self.y = ground;
                 self.airborne = false;
                 self.vertical_speed = (ground - self.previous_ground) / DT;
@@ -317,7 +323,10 @@ impl Car {
                 self.vertical_speed -= GRAVITY * DT;
                 self.y += self.vertical_speed * DT;
             } else {
-                self.vertical_speed = following.clamp(-30.0, 30.0);
+                let following = following.clamp(-30.0, 30.0);
+                let jolt = following - self.vertical_speed;
+                self.heave_velocity += (-jolt * 0.05).clamp(-0.6, 0.6);
+                self.vertical_speed = following;
                 self.y = ground;
             }
         }
@@ -337,11 +346,16 @@ impl Car {
             (slope_roll + lean).clamp(-MAX_ROLL, MAX_ROLL)
         };
         self.roll += (target_roll - self.roll) * 0.2;
+        if !self.airborne {
+            self.slope_pitch += (slope_pitch - self.slope_pitch) * 0.3;
+            self.slope_roll += (slope_roll.clamp(-MAX_ROLL, MAX_ROLL) - self.slope_roll) * 0.3;
+        }
         self.suspension_pitch += ((controls.throttle.max(0.0) * 0.03
             - controls.throttle.min(0.0) * -0.05)
             - self.suspension_pitch)
             * 0.1;
-        self.suspension *= 0.88;
+        self.heave_velocity += (-SPRING * self.suspension - DAMPING * self.heave_velocity) * DT;
+        self.suspension = (self.suspension + self.heave_velocity * DT).clamp(-0.05, 0.14);
         self.wheel_spin += forward_speed * DT * 2.0;
         events
     }
@@ -353,7 +367,17 @@ impl Car {
     }
 
     pub fn origin(&self) -> Vec3i32 {
-        world_to_psx(self.x, self.y + 0.02 - self.suspension, self.z)
+        world_to_psx(self.x, self.y + RIDE_HEIGHT - self.suspension, self.z)
+    }
+
+    pub fn wheel_rotation(&self) -> Mat3Fx12 {
+        Mat3Fx12::rotation_y(angle(self.heading))
+            * Mat3Fx12::rotation_x(angle(self.slope_pitch))
+            * Mat3Fx12::rotation_z(angle(self.slope_roll))
+    }
+
+    pub fn wheel_origin(&self) -> Vec3i32 {
+        world_to_psx(self.x, self.y, self.z)
     }
 }
 
@@ -364,6 +388,7 @@ struct Face {
     texture: Option<Texture>,
     flat: Rgb,
     bias: i32,
+    wheel: bool,
 }
 
 pub struct CarMesh {
@@ -417,6 +442,11 @@ fn beltline(z: i16) -> i16 {
 
 const SILL: i16 = -12;
 const CHAMFER: i16 = 8;
+const CREASE: f32 = 0.42;
+const RUBBER: Rgb = [30, 30, 32];
+const RIDE_HEIGHT: f32 = 0.08;
+const SPRING: f32 = 90.0;
+const DAMPING: f32 = 9.0;
 const HALF_WIDTH: i16 = 52;
 const FRONT: i16 = 126;
 const REAR: i16 = -126;
@@ -440,6 +470,7 @@ impl CarMesh {
                 texture: Some(image.texture),
                 flat: [128, 128, 128],
                 bias,
+                wheel: false,
             });
         };
         let w = HALF_WIDTH;
@@ -525,28 +556,6 @@ impl CarMesh {
         }
         textured(
             [
-                v(w, tail, REAR),
-                v(w, shoulder, FRONT - CHAMFER),
-                v(w, SILL, REAR),
-                v(w, SILL, FRONT - CHAMFER),
-            ],
-            &atlas.side_right,
-            false,
-            -24,
-        );
-        textured(
-            [
-                v(-w, shoulder, FRONT - CHAMFER),
-                v(-w, tail, REAR),
-                v(-w, SILL, FRONT - CHAMFER),
-                v(-w, SILL, REAR),
-            ],
-            &atlas.side_left,
-            false,
-            -24,
-        );
-        textured(
-            [
                 v(-w, boot, BOOT),
                 v(w, boot, BOOT),
                 v(-w, tail, REAR),
@@ -593,17 +602,6 @@ impl CarMesh {
         textured(
             [
                 v(rw, ROOF, ROOF_REAR),
-                v(-rw, ROOF, ROOF_REAR),
-                v(rw, ROOF, ROOF_FRONT),
-                v(-rw, ROOF, ROOF_FRONT),
-            ],
-            &atlas.roof,
-            false,
-            -26,
-        );
-        textured(
-            [
-                v(rw, ROOF, ROOF_REAR),
                 v(rw, ROOF, ROOF_FRONT),
                 v(w, boot, BOOT),
                 v(w, scuttle, SCUTTLE),
@@ -622,6 +620,109 @@ impl CarMesh {
             &atlas.side_glass,
             true,
             -28,
+        );
+
+        let mut sculpted_faces: Vec<Face> = Vec::new();
+        let mut sculpted = |points: [Vec3i16; 4], uvs: [(u8, u8); 4], image: &Image, bias: i32| {
+            sculpted_faces.push(Face {
+                normal: normal(&points),
+                points: points.to_vec(),
+                uvs: uvs.to_vec(),
+                texture: Some(image.texture),
+                flat: [128, 128, 128],
+                bias,
+                wheel: false,
+            });
+        };
+        let stations: [(i16, i16); 6] = [
+            (FRONT - CHAMFER, 0),
+            (66, 1),
+            (SCUTTLE, 1),
+            (-40, 1),
+            (-90, 3),
+            (REAR, 1),
+        ];
+        for side in [-1i16, 1] {
+            let image = if side > 0 {
+                &atlas.side_right
+            } else {
+                &atlas.side_left
+            };
+            let u_at = |z: i16| {
+                let u =
+                    ((z as f32 + SIDE_LENGTH / 2.0) / SIDE_LENGTH * 255.0).clamp(0.0, 255.0) as u8;
+                if side > 0 {
+                    image.u.wrapping_add(u)
+                } else {
+                    image.u.wrapping_add(255 - u)
+                }
+            };
+            let v_at = |fraction: f32| image.v + (fraction * 31.0) as u8;
+            let profile = |z: i16, bulge: i16| {
+                let top = if z >= FRONT - CHAMFER {
+                    shoulder
+                } else {
+                    beltline(z)
+                };
+                let crease = top + ((SILL - top) as f32 * CREASE) as i16;
+                [
+                    (side * (w + bulge / 2), top, 0.0),
+                    (side * (w + bulge), crease, CREASE),
+                    (side * (w - 2), SILL, 1.0),
+                ]
+            };
+            for pair in stations.windows(2) {
+                let ((front_z, front_bulge), (rear_z, rear_bulge)) = (pair[0], pair[1]);
+                let (front, rear) = (profile(front_z, front_bulge), profile(rear_z, rear_bulge));
+                for band in 0..2 {
+                    let corner = |row: &[(i16, i16, f32); 3], index: usize, z: i16| {
+                        let (x, y, fraction) = row[index];
+                        (v(x, y, z), (u_at(z), v_at(fraction)))
+                    };
+                    let (front_top, front_bottom) = (
+                        corner(&front, band, front_z),
+                        corner(&front, band + 1, front_z),
+                    );
+                    let (rear_top, rear_bottom) =
+                        (corner(&rear, band, rear_z), corner(&rear, band + 1, rear_z));
+                    let ordered = if side > 0 {
+                        [rear_top, front_top, rear_bottom, front_bottom]
+                    } else {
+                        [front_top, rear_top, front_bottom, rear_bottom]
+                    };
+                    sculpted(
+                        ordered.map(|(point, _)| point),
+                        ordered.map(|(_, uv)| uv),
+                        image,
+                        -24,
+                    );
+                }
+            }
+        }
+        let [roof_a, roof_b, roof_c, roof_d] = corners(&atlas.roof, false);
+        let middle = ((roof_a.0 as u16 + roof_b.0 as u16) / 2) as u8;
+        let crown = ROOF - 3;
+        sculpted(
+            [
+                v(rw, ROOF, ROOF_REAR),
+                v(0, crown, ROOF_REAR),
+                v(rw, ROOF, ROOF_FRONT),
+                v(0, crown, ROOF_FRONT),
+            ],
+            [roof_a, (middle, roof_a.1), roof_c, (middle, roof_c.1)],
+            &atlas.roof,
+            -26,
+        );
+        sculpted(
+            [
+                v(0, crown, ROOF_REAR),
+                v(-rw, ROOF, ROOF_REAR),
+                v(0, crown, ROOF_FRONT),
+                v(-rw, ROOF, ROOF_FRONT),
+            ],
+            [(middle, roof_b.1), roof_b, (middle, roof_d.1), roof_d],
+            &atlas.roof,
+            -26,
         );
 
         for z in [FRONT + 4, REAR - 4] {
@@ -695,6 +796,7 @@ impl CarMesh {
                 texture: None,
                 flat: color,
                 bias,
+                wheel: false,
             });
         };
         flat(
@@ -744,9 +846,10 @@ impl CarMesh {
                 texture,
                 flat: color,
                 bias,
+                wheel: color == RUBBER,
             });
         };
-        let rubber = [30, 30, 32];
+        let rubber = RUBBER;
         for (x, z) in [(-1.0f32, 1.0f32), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
             let center_z = z * WHEEL_Z;
             let (outer, inner) = (x * 55.0, x * 44.0);
@@ -897,6 +1000,7 @@ impl CarMesh {
                 );
             }
         }
+        faces.extend(sculpted_faces);
         Self {
             faces,
             wheel: atlas.wheel,
@@ -911,28 +1015,37 @@ impl CarMesh {
         sun: Rgb,
         ambient: Rgb,
     ) {
-        let rotation = car.rotation();
-        renderer.set_object(car.origin(), rotation);
-        renderer.set_lighting(rotation, sun_direction, sun, ambient);
-
-        for face in &self.faces {
-            renderer.gte.rgbc = [face.flat[0], face.flat[1], face.flat[2], 0];
-            let lit = renderer.gte.nccs(face.normal);
-            let points: Vec<Point> = face
-                .points
-                .iter()
-                .zip(&face.uvs)
-                .map(|(&p, &uv)| Point::new(p, lit, uv))
-                .collect();
-            if renderer.backface(&points) {
-                continue;
-            }
-            let surface = match face.texture {
-                Some(texture) => Surface::textured(texture),
-                None => Surface::flat(),
+        let body = car.rotation();
+        let wheels = car.wheel_rotation();
+        for wheel_pass in [true, false] {
+            let (rotation, origin) = if wheel_pass {
+                (wheels, car.wheel_origin())
+            } else {
+                (body, car.origin())
             };
-            renderer.polygon(&points, surface, face.bias + CAR_BIAS, 0);
+            renderer.set_object(origin, rotation);
+            renderer.set_lighting(rotation, sun_direction, sun, ambient);
+            for face in self.faces.iter().filter(|face| face.wheel == wheel_pass) {
+                renderer.gte.rgbc = [face.flat[0], face.flat[1], face.flat[2], 0];
+                let lit = renderer.gte.nccs(face.normal);
+                let points: Vec<Point> = face
+                    .points
+                    .iter()
+                    .zip(&face.uvs)
+                    .map(|(&p, &uv)| Point::new(p, lit, uv))
+                    .collect();
+                if renderer.backface(&points) {
+                    continue;
+                }
+                let surface = match face.texture {
+                    Some(texture) => Surface::textured(texture),
+                    None => Surface::flat(),
+                };
+                renderer.polygon(&points, surface, face.bias + CAR_BIAS, 0);
+            }
         }
+        renderer.set_object(car.wheel_origin(), wheels);
+        renderer.set_lighting(wheels, sun_direction, sun, ambient);
 
         let (sin, cos) = (car.wheel_spin.sin(), car.wheel_spin.cos());
         for (x, z) in [(-1.0f32, 1.0f32), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
