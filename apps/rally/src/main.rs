@@ -984,6 +984,19 @@ impl Game for Rally {
             draw_index,
             lighting,
         );
+        if let Some(beam) = lighting.headlight {
+            let braking = self.controls.throttle < -0.1 || self.controls.handbrake;
+            draw_lamps(
+                &mut self.renderer,
+                &self.atlas,
+                &self.world,
+                &self.track,
+                &self.car,
+                &self.camera,
+                beam.strength,
+                braking,
+            );
+        }
         self.mesh.draw(
             &mut self.renderer,
             &self.car,
@@ -999,19 +1012,6 @@ impl Game for Rally {
             &self.track,
             shadow_color,
         );
-        if let Some(beam) = lighting.headlight {
-            let braking = self.controls.throttle < -0.1 || self.controls.handbrake;
-            draw_lamps(
-                &mut self.renderer,
-                &self.atlas,
-                &self.world,
-                &self.track,
-                &self.car,
-                &self.camera,
-                beam.strength,
-                braking,
-            );
-        }
 
         let (a, b, t) = self.track.biomes.at(distance);
         let (weather, intensity) = if t < 0.5 {
@@ -1071,6 +1071,7 @@ fn draw_lamps(
     let (fx, fz) = car.forward();
     let (rx, rz) = car.right();
     let right = (camera.yaw.cos(), -camera.yaw.sin());
+    let view = (camera.yaw.sin(), camera.yaw.cos());
     let base_y = car.y + 0.08 - car.suspension;
     let fog_enabled = renderer.fog_enabled;
     renderer.fog_enabled = false;
@@ -1081,6 +1082,10 @@ fn draw_lamps(
                 size: f32,
                 color: [u8; 3],
                 bias: i32| {
+        let facing = (fx * view.0 + fz * view.1) * forward.signum();
+        if facing > 0.2 {
+            return;
+        }
         let x = car.x + fx * forward + rx * side;
         let z = car.z + fz * forward + rz * side;
         renderer.set_object(world_to_psx(x, base_y + up, z), Mat3Fx12::IDENTITY);
