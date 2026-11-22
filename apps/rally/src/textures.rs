@@ -20,7 +20,6 @@ pub struct Image {
 
 pub struct Atlas {
     pub ground: Image,
-    pub hay: Image,
     pub post: Image,
     pub spectators: [Image; 4],
     pub chevron: Image,
@@ -48,7 +47,6 @@ enum Slot {
     Cactus,
     Rock,
     Bush,
-    Hay,
     Post,
     Spectator0,
     Spectator1,
@@ -64,7 +62,7 @@ enum Slot {
     Stone,
 }
 
-const FOGGED_SLOTS: [Slot; 16] = [
+const FOGGED_SLOTS: [Slot; 15] = [
     Slot::Pine,
     Slot::SnowPine,
     Slot::Broadleaf,
@@ -72,7 +70,6 @@ const FOGGED_SLOTS: [Slot; 16] = [
     Slot::Cactus,
     Slot::Rock,
     Slot::Bush,
-    Slot::Hay,
     Slot::Post,
     Slot::Spectator0,
     Slot::Spectator1,
@@ -508,13 +505,6 @@ impl Atlas {
         });
         puff.blit(vram, 48, 64);
 
-        let mut hay = Canvas::new(32, 32);
-        hay.disc(16.0, 18.0, 13.0, |dx, dy| {
-            let ring = ((dx * dx + dy * dy).sqrt() * 5.0).fract();
-            (4.0 + ring * 6.0 + (0.4 - dy * 0.3).clamp(0.0, 0.4) * 10.0) as u8
-        });
-        hay.blit(vram, 64, 64);
-
         let mut post = Canvas::new(16, 32);
         post.rect(6, 4, 4, 28, 6);
         post.rect(6, 4, 1, 28, 9);
@@ -616,7 +606,6 @@ impl Atlas {
             clut(Slot::Puff),
             &ramp([255, 255, 255], [255, 255, 255]).map(|c| if c == 0 { 0 } else { c | 0x8000 }),
         );
-        vram.write_clut(clut(Slot::Hay), &ramp([120, 90, 30], [240, 210, 120]));
         vram.write_clut(clut(Slot::Post), &ramp([60, 40, 25], [200, 200, 200]));
         let shirts = [[200, 30, 30], [30, 60, 200], [230, 200, 40], [40, 160, 60]];
         for (index, shirt) in shirts.iter().enumerate() {
@@ -635,7 +624,6 @@ impl Atlas {
 
         Self {
             ground: image(Slot::Ground, 64, 0, 64, 64),
-            hay: image(Slot::Hay, 64, 64, 32, 32),
             post: image(Slot::Post, 96, 64, 16, 32),
             spectators: [
                 image(Slot::Spectator0, 0, 64, 16, 32),

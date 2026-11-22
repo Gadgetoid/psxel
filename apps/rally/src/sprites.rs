@@ -4,7 +4,9 @@ use psx_vram::{bgr555, Clut, TexPage, TextureDepth, Vram};
 use crate::biome::Rgb;
 use crate::textures::{Image, FOG_BANDS};
 
-const COLUMN_WIDTH: usize = 64;
+const COLUMN_WIDTH: usize = 32;
+const PAGE_COLUMNS: usize = 4;
+const MAX_SPRITE_WIDTH: usize = 64;
 const BANDED_CLUT_AREAS: [(u16, u16, u16, u16); 2] = [(512, 480, 1024, 512), (0, 486, 512, 506)];
 const PLAIN_CLUT_AREAS: [(u16, u16, u16, u16); 1] = [(0, 506, 512, 512)];
 const WIDE_PAGES: [(u8, u8, usize); 2] = [(15, 1, 224), (15, 0, 256)];
@@ -135,10 +137,10 @@ impl Default for SpriteSheet {
                 {
                     continue;
                 }
-                for u in [0, COLUMN_WIDTH] {
+                for unit in 0..PAGE_COLUMNS {
                     columns.push(Column {
                         page: TexPage::new(page, row, TextureDepth::Clut8),
-                        u,
+                        u: unit * COLUMN_WIDTH,
                         used: 0,
                         limit,
                     });
@@ -157,15 +159,35 @@ impl Default for SpriteSheet {
 
 impl SpriteSheet {
     fn place(&mut self, width: usize, height: usize, align: usize) -> (TexPage, usize, usize) {
-        assert!(width <= COLUMN_WIDTH, "sprite wider than a column");
-        let column = self
-            .columns
-            .iter_mut()
-            .find(|column| column.used.next_multiple_of(align) + height <= column.limit)
-            .expect("out of sprite texture space");
-        let v = column.used.next_multiple_of(align);
-        column.used = v + height;
-        (column.page, column.u, v)
+        assert!(width <= MAX_SPRITE_WIDTH, "sprite wider than two columns");
+        let span = width.div_ceil(COLUMN_WIDTH);
+        let mut best: Option<(usize, usize, usize)> = None;
+        for first in 0..self.columns.len() {
+            let start = &self.columns[first];
+            let unit = start.u / COLUMN_WIDTH;
+            if unit + span > PAGE_COLUMNS || !start.u.is_multiple_of(align.min(MAX_SPRITE_WIDTH)) {
+                continue;
+            }
+            let units = &self.columns[first..first + span];
+            let v = units
+                .iter()
+                .map(|column| column.used)
+                .max()
+                .unwrap_or(0)
+                .next_multiple_of(align);
+            if units.iter().any(|column| v + height > column.limit) {
+                continue;
+            }
+            let waste: usize = units.iter().map(|column| v - column.used).sum();
+            if best.is_none_or(|(_, _, best_waste)| waste < best_waste) {
+                best = Some((first, v, waste));
+            }
+        }
+        let (first, v, _) = best.expect("out of sprite texture space");
+        for column in &mut self.columns[first..first + span] {
+            column.used = v + height;
+        }
+        (self.columns[first].page, self.columns[first].u, v)
     }
 
     pub fn add(&mut self, vram: &mut Vram, bytes: &[u8], fog: bool) -> Image {

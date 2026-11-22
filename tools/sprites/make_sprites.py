@@ -49,10 +49,18 @@ RUT_DEPTH = 0.22
 RUT_CORE_METRES = 0.11
 
 GROUNDS = [
-    ("ground_grass", "short_grass_*", 0, dict(source_metres=1.0, patch_metres=0.6, rotate=True, detail=0.8, macro=0.1)),
+    ("ground_grass", "patchy_grass_*", 2, dict(source_metres=4.0, patch_metres=1.2, rotate=True, detail=0.8, macro=0.1)),
     ("ground_wheat", "golden_wheat_stubble_*", 0, dict(source_metres=1.0, patch_metres=0.6, rotate=False, detail=0.8, macro=0.07)),
     ("ground_leaves", "leaf_litter_*", 0, dict(source_metres=0.6, patch_metres=0.35, rotate=True, detail=0.9, macro=0.07)),
     ("ground_snow", "snowy_field_*", 0, dict(source_metres=2.0, patch_metres=1.0, rotate=True, detail=0.6, macro=0.03)),
+]
+
+LATE_SPRITES = [
+    ("hay", "hay_bales_*", (64, 48), SOLID, None),
+]
+
+LATE_ROADS = [
+    ("road_mud", "muddy_road_with_tyre_ruts_*", dict(kind="direct", overlap=0.15, detail=0.8)),
 ]
 
 ROCK_TEXTURE_SOURCE = "rocks_*"
@@ -545,9 +553,18 @@ def surface_texture(rgb, settings, rng):
     return finish_texture(add_wheel_tracks(work, settings["tracks"]), False, settings["detail"])
 
 
+def direct_texture(rgb, settings):
+    tile = vertically_periodic(rgb, int(rgb.shape[0] * settings["overlap"]))
+    image = Image.fromarray(np.clip(tile, 0, 255).astype(np.uint8))
+    work = np.asarray(image.resize((64 * WORK_SCALE, 64 * WORK_SCALE), Image.BOX), dtype=np.float32)
+    return finish_texture(work, False, settings["detail"])
+
+
 def road_texture(source_path, settings, rng, snow_sources):
     rgb = load_rgb(source_path)
-    if settings["kind"] == "tarmac":
+    if settings["kind"] == "direct":
+        small = direct_texture(rgb, settings)
+    elif settings["kind"] == "tarmac":
         small = tarmac_texture(rgb, settings, rng)
     elif settings["kind"] == "snow":
         small = snow_texture(rgb, settings, rng, snow_sources)
@@ -715,6 +732,12 @@ def build_all(source_dir):
     for name, pattern, box, sky_settings in HORIZONS:
         horizon_source = glob.glob(os.path.join(source_dir, pattern + ".jpg"))[0]
         written.append(save(horizon_texture(horizon_source, box, sky_settings), name))
+    for prefix, pattern, size, settings, variants in LATE_SPRITES:
+        for index, source in enumerate(find_sources(source_dir, pattern, variants)):
+            written.append(save(keyed_sprite(source, size, settings), "%s_%d" % (prefix, index)))
+    for prefix, pattern, settings in LATE_ROADS:
+        for index, source in enumerate(find_sources(source_dir, pattern, None)):
+            written.append(save(road_texture(source, settings, None, None), "%s_%d" % (prefix, index)))
     return written
 
 

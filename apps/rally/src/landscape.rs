@@ -5,7 +5,7 @@ use psx_math::{Mat3Fx12, Vec3i16};
 use psx_vram::Vram;
 
 use crate::art::{tiled, Art};
-use crate::biome::{Prop, Rgb, BIOMES};
+use crate::biome::{lerp_rgb, Prop, Rgb, BIOMES};
 use crate::render::{fog_amount, units, world_to_psx, Camera, Point, Renderer, Surface};
 use crate::rng::{hash, hash_float, Rng};
 use crate::sprites::band_image;
@@ -203,20 +203,31 @@ impl Landscape {
                         .unwrap_or(0) as usize;
                     let distance = Track::distance(road_index);
                     let (a, b, t) = track.biomes.at(distance);
-                    let biome = if t > 0.5 { &BIOMES[b] } else { &BIOMES[a] };
                     let textured = centre_distance < NEAR_RADIUS;
                     let steep = (high - low) / size > 0.75;
-                    let (image, windowed) = if steep {
-                        (
-                            art.cliff(biome.ground, hash(track.seed, ix as u64, iz as u64)),
-                            true,
-                        )
-                    } else if let Some(ground) = art.ground(biome.ground) {
-                        (tiled(ground), true)
-                    } else {
-                        (atlas.ground, false)
+                    let image_of = |biome: &crate::biome::Biome| {
+                        if steep {
+                            (
+                                art.cliff(biome.ground, hash(track.seed, ix as u64, iz as u64)),
+                                true,
+                            )
+                        } else if let Some(ground) = art.ground(biome.ground) {
+                            (tiled(ground), true)
+                        } else {
+                            (atlas.ground, false)
+                        }
                     };
-                    let average = average_of(&image);
+                    let (image_a, windowed_a) = image_of(&BIOMES[a]);
+                    let (image_b, windowed_b) = image_of(&BIOMES[b]);
+                    let average_a = average_of(&image_a);
+                    let average_b = average_of(&image_b);
+                    let target = lerp_rgb(average_a, average_b, t);
+                    let choose_b = t > hash_float(track.seed ^ 0xb1e7, ix as u64, iz as u64);
+                    let (image, windowed, average) = if choose_b {
+                        (image_b, windowed_b, average_b)
+                    } else {
+                        (image_a, windowed_a, average_a)
+                    };
                     let slope_x =
                         ((heights[1] + heights[3]) - (heights[0] + heights[2])) * 0.5 / size;
                     let slope_z =
@@ -230,10 +241,12 @@ impl Landscape {
                         ((ambient + direct) * 128.0).clamp(0.0, 255.0) as u8
                     });
                     let color = if textured {
-                        lit
+                        [0, 1, 2].map(|c| {
+                            let pull = (target[c] as f32 + 4.0) / (average[c] as f32 + 4.0);
+                            (lit[c] as f32 * pull.clamp(0.5, 2.0)).min(255.0) as u8
+                        })
                     } else {
-                        [0, 1, 2]
-                            .map(|c| ((average[c] as u32 * lit[c] as u32) / 128).min(255) as u8)
+                        [0, 1, 2].map(|c| ((target[c] as u32 * lit[c] as u32) / 128).min(255) as u8)
                     };
                     let origin = world_to_psx(x0, low, z0);
                     renderer.set_object(origin, Mat3Fx12::IDENTITY);
@@ -423,7 +436,7 @@ pub fn prop_sprite(art: &Art, atlas: &Atlas, prop: Prop, key: u64) -> Option<(Im
         Prop::SmallRock => (pick(&art.small_rock), 0.9, 0.9),
         Prop::Bush => (pick(&art.bush), 3.0, 2.25),
         Prop::Scrub => (pick(&art.scrub), 2.6, 1.95),
-        Prop::HayBale => (atlas.hay, 1.8, 1.6),
+        Prop::HayBale => (pick(&art.hay), 1.9, 1.4),
         Prop::FencePost => (atlas.post, 0.5, 1.4),
         Prop::Spectator => (atlas.spectators[(key % 4) as usize], 0.8, 1.75),
         Prop::Boulder => return None,

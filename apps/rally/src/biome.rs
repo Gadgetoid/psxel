@@ -231,8 +231,8 @@ pub const BIOMES: [Biome; 5] = [
     },
     Biome {
         name: "AUTUMN VALLEY",
-        surface: "WET GRAVEL",
-        road: Road::Gravel,
+        surface: "MUD",
+        road: Road::Mud,
         ground: Ground::Leaves,
         sky_top: [90, 90, 120],
         sky_horizon: [210, 160, 130],

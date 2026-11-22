@@ -523,8 +523,7 @@ impl World {
                 let near_row = index.abs_diff(from_index) <= 3;
                 let row_depth = (centres[row] as u32 + centres[row + 1] as u32) / 2;
                 let (a, b, t) = track.biomes.at(Track::distance(index));
-                let threshold =
-                    0.5 + (hash_float(track.seed ^ 0x90ad, index as u64, 0) - 0.5) * 0.25;
+                let threshold = hash_float(track.seed ^ 0x90ad, index as u64 / 2, 0);
                 let biome = if t > threshold {
                     &BIOMES[b]
                 } else {
@@ -922,7 +921,7 @@ impl World {
             Prop::Bush => (pick(&art.bush), 3.0, 2.25, true),
             Prop::Scrub => (pick(&art.scrub), 2.6, 1.95, true),
             Prop::Boulder => (atlas.stone, 2.0, 2.0, false),
-            Prop::HayBale => (atlas.hay, 1.8, 1.6, false),
+            Prop::HayBale => (pick(&art.hay), 1.9, 1.4, true),
             Prop::FencePost => (atlas.post, 0.5, 1.4, false),
             Prop::Spectator => (atlas.spectators[(key % 4) as usize], 0.8, 1.75, false),
         }

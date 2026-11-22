@@ -21,6 +21,7 @@ pub enum Road {
     Tarmac,
     Sand,
     Snow,
+    Mud,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +52,8 @@ pub struct Art {
     pub tarmac: Vec<Image>,
     pub sand: Vec<Image>,
     pub snow_road: Vec<Image>,
+    pub mud: Vec<Image>,
+    pub hay: Vec<Image>,
     pub grass: Image,
     pub wheat: Image,
     pub leaves: Image,
@@ -66,29 +69,6 @@ pub struct Art {
 impl Art {
     pub fn load(vram: &mut Vram) -> Self {
         let mut sheet = SpriteSheet::default();
-        let fir = family!(sheet, vram, true, "fir_0", "fir_1", "fir_2", "fir_3");
-        let pine = family!(sheet, vram, true, "pine_0", "pine_1", "pine_2", "pine_3");
-        let snow_fir = family!(
-            sheet,
-            vram,
-            true,
-            "snow_fir_0",
-            "snow_fir_1",
-            "snow_fir_2",
-            "snow_fir_3"
-        );
-        let broadleaf = family!(
-            sheet,
-            vram,
-            true,
-            "broadleaf_0",
-            "broadleaf_1",
-            "broadleaf_2",
-            "broadleaf_3"
-        );
-        let autumn = family!(sheet, vram, true, "autumn_0", "autumn_1", "autumn_2");
-        let bare = family!(sheet, vram, true, "bare_0", "bare_1", "bare_2", "bare_3");
-        let joshua = family!(sheet, vram, true, "joshua_0", "joshua_1", "joshua_2", "joshua_3");
         let gravel = family!(
             sheet,
             vram,
@@ -125,11 +105,46 @@ impl Art {
             "road_snow_2",
             "road_snow_3"
         );
+        let mud = family!(sheet, vram, false, "road_mud_0", "road_mud_1");
         let grass = sheet.add(vram, sprite!("ground_grass"), false);
         let wheat = sheet.add(vram, sprite!("ground_wheat"), false);
         let leaves = sheet.add(vram, sprite!("ground_leaves"), false);
         let snow_ground = sheet.add(vram, sprite!("ground_snow"), false);
         let rock_texture = sheet.add(vram, sprite!("rock_texture"), false);
+        let cliff_desert = family!(
+            sheet,
+            vram,
+            false,
+            "cliff_desert_0",
+            "cliff_desert_1",
+            "cliff_desert_2",
+            "cliff_desert_3",
+            "cliff_desert_plain"
+        );
+        let fir = family!(sheet, vram, true, "fir_0", "fir_1", "fir_2", "fir_3");
+        let pine = family!(sheet, vram, true, "pine_0", "pine_1", "pine_2", "pine_3");
+        let snow_fir = family!(
+            sheet,
+            vram,
+            true,
+            "snow_fir_0",
+            "snow_fir_1",
+            "snow_fir_2",
+            "snow_fir_3"
+        );
+        let broadleaf = family!(
+            sheet,
+            vram,
+            true,
+            "broadleaf_0",
+            "broadleaf_1",
+            "broadleaf_2",
+            "broadleaf_3"
+        );
+        let autumn = family!(sheet, vram, true, "autumn_0", "autumn_1", "autumn_2");
+        let bare = family!(sheet, vram, true, "bare_0", "bare_1", "bare_2", "bare_3");
+        let joshua = family!(sheet, vram, true, "joshua_0", "joshua_1", "joshua_2", "joshua_3");
+        let hay = family!(sheet, vram, true, "hay_0", "hay_1");
         let rock = family!(sheet, vram, true, "rock_0", "rock_1", "rock_2", "rock_3");
         let snow_rock = family!(
             sheet,
@@ -151,16 +166,6 @@ impl Art {
             "small_rock_1",
             "small_rock_2",
             "small_rock_3"
-        );
-        let cliff_desert = family!(
-            sheet,
-            vram,
-            false,
-            "cliff_desert_0",
-            "cliff_desert_1",
-            "cliff_desert_2",
-            "cliff_desert_3",
-            "cliff_desert_plain"
         );
         let horizon_forest = sheet.add_wide(vram, sprite!("horizon_forest"));
         let horizon_farmland = sheet.add_wide(vram, sprite!("horizon_farmland"));
@@ -185,6 +190,8 @@ impl Art {
             tarmac,
             sand,
             snow_road,
+            mud,
+            hay,
             grass,
             wheat,
             leaves,
@@ -204,6 +211,7 @@ impl Art {
             Road::Tarmac => &self.tarmac,
             Road::Sand => &self.sand,
             Road::Snow => &self.snow_road,
+            Road::Mud => &self.mud,
         };
         &family[(variant % family.len() as u64) as usize]
     }
