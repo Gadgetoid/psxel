@@ -78,7 +78,8 @@ pub struct CarAtlas {
     pub rear_glass: Image,
     pub bonnet: Image,
     pub roof: Image,
-    pub side_glass: Image,
+    pub door_glass: Image,
+    pub quarter_glass: Image,
     pub wheel: Image,
     pub lamp: Image,
     pub flap: Image,
@@ -105,23 +106,11 @@ fn image(u: u8, v: u8, width: u8, height: u8) -> Image {
     }
 }
 
-pub const SIDE_LENGTH: f32 = 252.0;
-pub const WHEEL_Z: f32 = 86.0;
+pub const BODY_FRONT: f32 = 114.0;
+pub const BODY_REAR: f32 = -138.0;
 
 fn side_u(z: f32) -> f32 {
-    (z + SIDE_LENGTH / 2.0) / SIDE_LENGTH * 255.0
-}
-
-fn ellipse(canvas: &mut Canvas, cx: f32, cy: f32, rx: f32, ry: f32, value: u8) {
-    for y in (cy - ry) as i32 - 1..=(cy + ry) as i32 + 1 {
-        for x in (cx - rx) as i32 - 1..=(cx + rx) as i32 + 1 {
-            let dx = (x as f32 + 0.5 - cx) / rx;
-            let dy = (y as f32 + 0.5 - cy) / ry;
-            if dx * dx + dy * dy <= 1.0 {
-                canvas.set(x, y, value);
-            }
-        }
-    }
+    (z - BODY_REAR) / (BODY_FRONT - BODY_REAR) * 255.0
 }
 
 fn side_base() -> Canvas {
@@ -136,16 +125,11 @@ fn side_base() -> Canvas {
         let taper = x - 246;
         side.rect(x, 3 + taper, 1, (8 - taper * 2).max(0), STRIPE);
     }
-    let (door_front, door_rear) = (side_u(28.0) as i32, side_u(-40.0) as i32);
+    let (door_front, door_rear) = (side_u(38.0) as i32, side_u(-32.0) as i32);
     side.rect(door_front, 1, 1, 28, SHADE);
     side.rect(door_rear, 1, 1, 28, SHADE);
-    side.rect(door_rear + 6, 13, 5, 2, CHROME);
-    for wheel_z in [WHEEL_Z, -WHEEL_Z] {
-        let u = side_u(wheel_z);
-        ellipse(&mut side, u, 26.0, 23.0, 22.0, BLACK);
-        ellipse(&mut side, u, 26.0, 20.0, 19.0, 0);
-    }
-    side.rect(side_u(118.0) as i32, 14, 3, 2, AMBER);
+    side.rect(door_rear + 3, 13, 5, 2, CHROME);
+    side.rect(side_u(102.0) as i32, 13, 3, 2, AMBER);
     side
 }
 
@@ -160,29 +144,32 @@ fn front() -> Canvas {
     let mut front = Canvas::new(64, 32);
     front.rect(0, 0, 64, 32, PAINT);
     front.rect(0, 0, 64, 2, SHADE);
-    front.rect(17, 8, 30, 11, CHROME);
-    front.rect(18, 9, 28, 9, BLACK);
-    for y in (10..17).step_by(2) {
-        front.rect(19, y, 26, 1, CHROME_DARK);
+    front.rect(1, 4, 62, 11, BLACK);
+    for x in [1, 49] {
+        front.rect(x, 3, 14, 13, BLACK);
     }
-    front.rect(31, 9, 2, 9, CHROME);
-    for cx in [9.5f32, 54.5] {
-        front.disc(cx, 13.0, 8.5, |_, _| CHROME);
-        front.disc(cx, 13.0, 7.0, |dx, dy| {
-            if dx * dx + dy * dy < 0.12 && dx < 0.0 && dy < 0.0 {
+    front.rect(17, 5, 30, 1, CHROME);
+    front.rect(17, 13, 30, 1, CHROME);
+    for y in (7..13).step_by(2) {
+        front.rect(18, y, 28, 1, CHROME_DARK);
+    }
+    for cx in [7.5f32, 56.5] {
+        front.disc(cx, 9.5, 5.6, |_, _| CHROME);
+        front.disc(cx, 9.5, 4.6, |dx, dy| {
+            if dx * dx + dy * dy < 0.15 && dx < 0.0 && dy < 0.0 {
                 WHITE
             } else {
                 LENS
             }
         });
-        front.rect(cx as i32 - 8, 13, 17, 1, CHROME_DARK);
     }
-    front.rect(4, 22, 6, 3, AMBER);
-    front.rect(54, 22, 6, 3, AMBER);
-    front.rect(24, 21, 16, 3, BLACK);
-    front.rect(0, 25, 64, 1, CHROME);
-    front.rect(0, 26, 64, 2, CHROME_DARK);
-    front.rect(0, 28, 64, 4, SHADE);
+    front.rect(3, 16, 6, 2, AMBER);
+    front.rect(55, 16, 6, 2, AMBER);
+    front.rect(0, 23, 64, 1, SHADE);
+    for cx in [21.5f32, 27.5, 36.5, 42.5] {
+        front.disc(cx, 26.5, 1.8, |_, _| BLACK);
+    }
+    front.rect(0, 30, 64, 2, SHADE);
     front
 }
 
@@ -190,19 +177,17 @@ fn rear(number: u32) -> Canvas {
     let mut rear = Canvas::new(64, 32);
     rear.rect(0, 0, 64, 32, PAINT);
     rear.rect(0, 0, 64, 1, SHADE);
-    rear.rect(6, 4, 52, 1, SHADE);
-    for x in [3, 55] {
-        rear.rect(x, 4, 6, 14, CHROME);
-        rear.rect(x + 1, 5, 4, 4, AMBER);
-        rear.rect(x + 1, 9, 4, 8, RED);
+    rear.rect(10, 3, 44, 1, SHADE);
+    for x in [2, 54] {
+        rear.rect(x, 6, 8, 12, CHROME);
+        rear.rect(x + 1, 7, 6, 3, AMBER);
+        rear.rect(x + 1, 10, 6, 7, RED);
     }
-    rear.rect(18, 13, 28, 10, BLACK);
-    rear.rect(19, 14, 26, 8, LENS);
-    rear.text(20, 14, &format!("X{number:02}"), BLACK, 1);
-    rear.rect(0, 24, 64, 1, CHROME);
-    rear.rect(0, 25, 64, 2, CHROME_DARK);
+    rear.rect(18, 8, 28, 10, BLACK);
+    rear.rect(19, 9, 26, 8, LENS);
+    rear.text(20, 9, &format!("X{number:02}"), BLACK, 1);
     rear.rect(0, 27, 64, 5, SHADE);
-    rear.rect(10, 28, 4, 2, BLACK);
+    rear.rect(10, 27, 4, 3, BLACK);
     rear
 }
 
@@ -255,15 +240,20 @@ fn roof(number: u32) -> Canvas {
 
 fn side_glass() -> Canvas {
     let mut glass = Canvas::new(64, 32);
-    glass.rect(0, 0, 64, 32, PAINT);
-    glass.rect(3, 3, 26, 27, GLASS_DARK);
-    glass.rect(34, 3, 28, 27, GLASS_DARK);
-    for y in (6..30).step_by(5) {
-        glass.rect(3, y, 26, 1, GLASS);
-        glass.rect(34, y, 28, 1, GLASS);
+    glass.rect(0, 0, 64, 32, GLASS_DARK);
+    for y in (5..30).step_by(5) {
+        glass.rect(0, y, 64, 1, GLASS);
     }
-    glass.rect(29, 0, 5, 32, BLACK);
-    glass.rect(0, 30, 64, 2, CHROME);
+    glass.rect(0, 0, 64, 2, BLACK);
+    glass.rect(0, 0, 2, 32, BLACK);
+    glass.rect(30, 0, 4, 32, BLACK);
+    glass.rect(32, 0, 7, 32, PAINT);
+    glass.rect(62, 0, 2, 32, BLACK);
+    for y in 0..6 {
+        glass.rect(39, y, 6 - y, 1, PAINT);
+        glass.rect(39, 29 - y, 6 - y, 1, PAINT);
+    }
+    glass.rect(0, 29, 64, 3, CHROME);
     glass
 }
 
@@ -292,11 +282,15 @@ fn wheel() -> Canvas {
 fn lamp() -> Canvas {
     let mut lamp = Canvas::new(32, 32);
     lamp.disc(16.0, 16.0, 15.8, |_, _| CHROME);
-    lamp.disc(16.0, 16.0, 14.0, |_, _| BLACK);
-    lamp.disc(16.0, 16.0, 10.5, |_, _| WHITE);
-    lamp.disc(16.0, 16.0, 9.0, |_, _| BLACK);
-    lamp.rect(9, 15, 14, 3, WHITE);
-    lamp.rect(15, 9, 3, 14, WHITE);
+    lamp.disc(16.0, 16.0, 13.5, |_, _| CHROME_DARK);
+    lamp.disc(16.0, 16.0, 12.0, |dx, dy| {
+        if dx * dx + dy * dy < 0.2 && dx < 0.0 && dy < 0.0 {
+            WHITE
+        } else {
+            LENS
+        }
+    });
+    lamp.rect(6, 15, 20, 2, CHROME_DARK);
     lamp
 }
 
@@ -311,10 +305,10 @@ pub fn build(vram: &mut Vram, number: u32) -> CarAtlas {
     let page = page();
     let mut right = side_base();
     let mut left = right.mirrored();
-    roundel(&mut right, side_u(-6.0), number);
-    roundel(&mut left, 255.0 - side_u(-6.0), number);
-    right.text(side_u(-112.0) as i32, 4, "WORKS", WHITE, 1);
-    left.text(255 - side_u(-112.0) as i32 - 30, 4, "WORKS", WHITE, 1);
+    roundel(&mut right, side_u(3.0), number);
+    roundel(&mut left, 255.0 - side_u(3.0), number);
+    right.text(side_u(-62.0) as i32, 4, "WORKS", WHITE, 1);
+    left.text(255 - side_u(-62.0) as i32 - 30, 4, "WORKS", WHITE, 1);
     right.blit_to(vram, page, 0, 0);
     left.blit_to(vram, page, 0, 32);
     front().blit_to(vram, page, 0, 64);
@@ -344,7 +338,8 @@ pub fn build(vram: &mut Vram, number: u32) -> CarAtlas {
         rear_glass: image(192, 64, 64, 32),
         bonnet: image(0, 96, 64, 64),
         roof: image(64, 96, 64, 64),
-        side_glass: image(128, 96, 64, 32),
+        door_glass: image(128, 96, 32, 32),
+        quarter_glass: image(160, 96, 32, 32),
         wheel: image(192, 96, 32, 32),
         lamp: image(224, 96, 32, 32),
         flap: image(128, 128, 16, 32),
