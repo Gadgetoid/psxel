@@ -1,0 +1,18 @@
+[package]
+name = "rally"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+psx_engine = { path = "../../crates/psx_engine" }
+psx_math = { path = "../../crates/psx_math" }
+psx_prim = { path = "../../crates/psx_prim" }
+psx_soft = { path = "../../crates/psx_soft" }
+psx_vram = { path = "../../crates/psx_vram" }
+psx_spu = { path = "../../crates/psx_spu" }
+web-time = "1"
+png = "0.18"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { workspace = true, features = ["Window", "Storage", "Location"] }

@@ -1,0 +1,10 @@
+[package]
+name = "psx_math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+proptest.workspace = true
