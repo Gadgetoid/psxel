@@ -256,12 +256,21 @@ impl Landscape {
                         );
                         Point::new(local, lighting.lit_by_beam(color, x0 + dx, z0 + dz), (u, v))
                     };
-                    let points = [
-                        corner(2, 0.0, size, u0, v0),
-                        corner(3, size, size, u1, v0),
-                        corner(0, 0.0, 0.0, u0, v1),
-                        corner(1, size, 0.0, u1, v1),
-                    ];
+                    let points = if heights[0] + heights[3] <= heights[1] + heights[2] {
+                        [
+                            corner(2, 0.0, size, u0, v0),
+                            corner(3, size, size, u1, v0),
+                            corner(0, 0.0, 0.0, u0, v1),
+                            corner(1, size, 0.0, u1, v1),
+                        ]
+                    } else {
+                        [
+                            corner(0, 0.0, 0.0, u0, v1),
+                            corner(2, 0.0, size, u0, v0),
+                            corner(1, size, 0.0, u1, v1),
+                            corner(3, size, size, u1, v0),
+                        ]
+                    };
                     let surface = if textured {
                         Surface::textured(image.texture)
                             .tinted(fog_tint_from(average, lighting.fog))

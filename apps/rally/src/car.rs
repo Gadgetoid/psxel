@@ -15,6 +15,7 @@ const BRAKING: f32 = 26.0;
 const WHEELBASE: f32 = 2.6;
 const MAX_STEER: f32 = 0.55;
 const CAR_BIAS: i32 = -420;
+const WHEEL_BIAS: i32 = 40;
 const MAX_ROLL: f32 = 0.35;
 const WHEEL_OFFSET_FORWARD: f32 = 1.3;
 const WHEEL_OFFSET_SIDE: f32 = 0.8;
@@ -1041,7 +1042,8 @@ impl CarMesh {
                     Some(texture) => Surface::textured(texture),
                     None => Surface::flat(),
                 };
-                renderer.polygon(&points, surface, face.bias + CAR_BIAS, 0);
+                let wheel_bias = if wheel_pass { WHEEL_BIAS } else { 0 };
+                renderer.polygon(&points, surface, face.bias + wheel_bias + CAR_BIAS, 0);
             }
         }
         renderer.set_object(car.wheel_origin(), wheels);
@@ -1078,7 +1080,12 @@ impl CarMesh {
             if renderer.backface(&points) {
                 continue;
             }
-            renderer.polygon(&points, Surface::textured(image.texture), -30 + CAR_BIAS, 0);
+            renderer.polygon(
+                &points,
+                Surface::textured(image.texture),
+                -30 + WHEEL_BIAS + CAR_BIAS,
+                0,
+            );
         }
     }
 }
