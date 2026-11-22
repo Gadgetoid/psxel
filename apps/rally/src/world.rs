@@ -1332,13 +1332,13 @@ fn draw_backdrop(renderer: &mut Renderer, image: &Image, shade: f32) {
         let ((ax, az), (bx, bz)) = (at(segment), at(segment + 1));
         let panel = (segment % PANELS) as u8;
         let mirrored = (segment / PANELS) % 2 == 1;
+        let start = panel as u16 * step as u16;
+        let end = (start + step as u16 - 1) as u8;
+        let start = start as u8;
         let (ua, ub) = if mirrored {
-            (
-                255 - panel * step,
-                255u8.saturating_sub((panel + 1) * step - 1),
-            )
+            (255 - start, 255 - end)
         } else {
-            (panel * step, (panel + 1) * step - 1)
+            (start, end)
         };
         let (v0, v1) = (image.v, image.v + image.height - 1);
         let color = scale_rgb([128, 128, 128], shade);
