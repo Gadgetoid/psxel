@@ -2,7 +2,7 @@ use psx_math::{Mat3Fx12, Vec3i16, Vec3i32};
 use psx_prim::Texture;
 
 use crate::biome::Rgb;
-use crate::livery::{CarAtlas, SIDE_LENGTH, WHEEL_Z};
+use crate::livery::{CarAtlas, BODY_FRONT, BODY_REAR};
 use crate::render::{angle, world_to_psx, Point, Renderer, Surface};
 use crate::textures::Image;
 use crate::track::Track;
@@ -17,7 +17,7 @@ const MAX_STEER: f32 = 0.55;
 const CAR_BIAS: i32 = -420;
 const WHEEL_BIAS: i32 = 40;
 const MAX_ROLL: f32 = 0.35;
-const WHEEL_OFFSET_FORWARD: f32 = 1.3;
+const WHEEL_OFFSET_FORWARD: f32 = 1.2;
 const WHEEL_OFFSET_SIDE: f32 = 0.8;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -417,6 +417,33 @@ struct Face {
     wheel: bool,
 }
 
+impl Face {
+    fn textured(points: Vec<Vec3i16>, uvs: Vec<(u8, u8)>, texture: Texture, bias: i32) -> Self {
+        Self {
+            points,
+            uvs,
+            normal: Vec3i16::new(0, 0, 0),
+            texture: Some(texture),
+            flat: [128, 128, 128],
+            bias,
+            wheel: false,
+        }
+    }
+
+    fn flat(points: Vec<Vec3i16>, color: Rgb, bias: i32) -> Self {
+        let uvs = vec![(0, 0); points.len()];
+        Self {
+            points,
+            uvs,
+            normal: Vec3i16::new(0, 0, 0),
+            texture: None,
+            flat: color,
+            bias,
+            wheel: false,
+        }
+    }
+}
+
 pub struct CarMesh {
     faces: Vec<Face>,
     wheel: Image,
@@ -424,6 +451,10 @@ pub struct CarMesh {
 
 fn v(x: i16, y: i16, z: i16) -> Vec3i16 {
     Vec3i16::new(x, y, z)
+}
+
+fn point(x: f32, y: f32, z: f32) -> Vec3i16 {
+    v(x.round() as i16, y.round() as i16, z.round() as i16)
 }
 
 pub fn normal(points: &[Vec3i16]) -> Vec3i16 {
@@ -451,584 +482,833 @@ fn corners(image: &Image, mirror: bool) -> [(u8, u8); 4] {
     [(left, image.v), (right, image.v), (left, v1), (right, v1)]
 }
 
-fn half_image(image: &Image, right: bool, v_from: u8, v_to: u8) -> Image {
+fn half_image(image: &Image, right: bool) -> Image {
     let half = image.width / 2;
     Image {
         u: if right { image.u + half } else { image.u },
-        v: image.v + v_from,
+        v: image.v,
         width: half,
-        height: v_to - v_from + 1,
+        height: image.height,
         texture: image.texture,
     }
 }
 
-fn beltline(z: i16) -> i16 {
-    -42 - ((126 - z as i32) * 4 / 252) as i16
+fn image_uv(image: &Image, across: f32, down: f32) -> (u8, u8) {
+    let u = across.clamp(0.0, 1.0) * (image.width - 1) as f32;
+    let v = down.clamp(0.0, 1.0) * (image.height - 1) as f32;
+    (
+        image.u.wrapping_add(u.round() as u8),
+        image.v.wrapping_add(v.round() as u8),
+    )
 }
 
-const SILL: i16 = -12;
-const CHAMFER: i16 = 8;
-const CREASE: f32 = 0.42;
+fn interpolate(stations: &[(f32, f32)], z: f32) -> f32 {
+    for pair in stations.windows(2) {
+        let ((front_z, front_y), (rear_z, rear_y)) = (pair[0], pair[1]);
+        if z >= rear_z {
+            let along = ((front_z - z) / (front_z - rear_z)).clamp(0.0, 1.0);
+            return front_y + (rear_y - front_y) * along;
+        }
+    }
+    stations[stations.len() - 1].1
+}
+
+fn belt(z: f32) -> f32 {
+    interpolate(&BELT, z)
+}
+
+fn crease(z: f32) -> f32 {
+    interpolate(&CREASE, z)
+}
+
+fn crown(z: f32) -> f32 {
+    belt(z) - CROWN
+}
+
+fn body_x(z: f32, y: f32) -> f32 {
+    let (top, middle) = (belt(z), crease(z));
+    if y <= middle {
+        let along = ((y - top) / (middle - top)).clamp(0.0, 1.0);
+        BELT_X + (HALF_WIDTH - BELT_X) * along
+    } else {
+        let along = ((y - middle) / (SILL - middle)).clamp(0.0, 1.0);
+        HALF_WIDTH + (SILL_X - HALF_WIDTH) * along
+    }
+}
+
+fn body_point(side: f32, z: f32, y: f32) -> Vec3i16 {
+    point(side * body_x(z, y), y, z)
+}
+
 const RUBBER: Rgb = [30, 30, 32];
+const UNDERBODY: Rgb = [20, 20, 22];
+const WHEEL_WELL: Rgb = [14, 14, 16];
+const LAMP_HOUSING: Rgb = [24, 24, 26];
+const SUMP_GUARD: Rgb = [150, 150, 156];
 const RIDE_HEIGHT: f32 = 0.08;
 const SPRING: f32 = 90.0;
 const DAMPING: f32 = 9.0;
-const HALF_WIDTH: i16 = 52;
-const FRONT: i16 = 126;
-const REAR: i16 = -126;
-const SCUTTLE: i16 = 28;
-const ROOF_FRONT: i16 = 2;
-const ROOF_REAR: i16 = -58;
-const BOOT: i16 = -84;
-const ROOF: i16 = -84;
-const ROOF_HALF_WIDTH: i16 = 43;
-const WHEEL_RADIUS: f32 = 20.0;
-const WHEEL_Y: f32 = -20.0;
+const FRONT: f32 = BODY_FRONT;
+const REAR: f32 = BODY_REAR;
+const NOSE_Z: f32 = 112.0;
+const CHIN_Z: f32 = 110.0;
+const TAIL_TOP_Z: f32 = -136.0;
+const TAIL_BOTTOM_Z: f32 = -135.0;
+const TAIL_BOTTOM_Y: f32 = -10.0;
+const SIDE_FRONT: f32 = 107.0;
+const SIDE_REAR: f32 = -131.0;
+const SCUTTLE: f32 = 38.0;
+const BONNET_MIDDLE: f32 = 75.0;
+const ROOF_FRONT: f32 = 6.0;
+const B_PILLAR: f32 = -30.0;
+const ROOF_REAR: f32 = -76.0;
+const BOOT: f32 = -100.0;
+const ROOF: f32 = -77.0;
+const CROWN: f32 = 3.0;
+const SILL: f32 = -8.0;
+const SILL_X: f32 = 47.0;
+const BELT_X: f32 = 46.0;
+const HALF_WIDTH: f32 = 50.0;
+const NOSE_HALF_WIDTH: f32 = 40.0;
+const ROOF_HALF_WIDTH: f32 = 38.0;
+const BELT: [(f32, f32); 4] = [
+    (NOSE_Z, -42.0),
+    (SCUTTLE, -50.0),
+    (BOOT, -53.0),
+    (TAIL_TOP_Z, -47.0),
+];
+const CREASE: [(f32, f32); 5] = [
+    (NOSE_Z, -36.0),
+    (SCUTTLE, -35.0),
+    (-47.0, -35.0),
+    (-80.0, -38.0),
+    (TAIL_TOP_Z, -37.0),
+];
+const MID_STATIONS: [f32; 4] = [SCUTTLE, 4.0, B_PILLAR, -47.0];
+const TAIL_STATIONS: [f32; 2] = [-110.0, SIDE_REAR];
+const FRONT_ARCH: [f32; 4] = [SIDE_FRONT, 87.0, 62.0, SCUTTLE];
+const REAR_ARCH: [f32; 4] = [-47.0, -70.0, BOOT, -110.0];
+const ARCH_Y: f32 = -16.0;
+const ARCH_RADIUS: f32 = 28.0;
+const LIP_RADIUS: f32 = 23.0;
+const FLARE_X: f32 = 56.0;
+const WELL_X: f32 = 40.0;
+const WHEEL_Z: f32 = 77.0;
+const WHEEL_RADIUS: f32 = 19.0;
+const WHEEL_Y: f32 = -19.0;
+const TYRE_OUTER: f32 = 54.0;
+const TYRE_INNER: f32 = 42.0;
+const TYRE_SEGMENTS: usize = 12;
+const MUDFLAP_OFFSET: f32 = 24.0;
+const FRONT_BUMPER: (f32, f32, f32, f32) = (117.0, 104.0, -23.0, -18.0);
+const REAR_BUMPER: (f32, f32, f32, f32) = (-141.0, -127.0, -26.0, -21.0);
+const BUMPER_HALF_WIDTH: f32 = 36.0;
+const BUMPER_WRAP_X: f32 = 51.0;
+const BUMPER_DEPTH: f32 = 5.0;
+const SPOT_LAMPS: [(f32, f32, f32); 4] = [
+    (-17.0, -31.0, 119.0),
+    (17.0, -31.0, 119.0),
+    (-20.0, -14.0, 122.0),
+    (20.0, -14.0, 122.0),
+];
+const SPOT_RADIUS: f32 = 7.0;
+const SPOT_DEPTH: f32 = 5.0;
+const SPOT_SEGMENTS: usize = 6;
+
+struct MeshBuilder {
+    faces: Vec<Face>,
+}
+
+impl MeshBuilder {
+    fn add(&mut self, mut face: Face, outward: [f32; 3]) {
+        let facing = normal(&face.points);
+        let alignment = facing.x as f32 * outward[0]
+            + facing.y as f32 * outward[1]
+            + facing.z as f32 * outward[2];
+        if alignment < 0.0 {
+            face.points.swap(0, 1);
+            face.uvs.swap(0, 1);
+            if face.points.len() == 4 {
+                face.points.swap(2, 3);
+                face.uvs.swap(2, 3);
+            }
+        }
+        face.normal = normal(&face.points);
+        self.faces.push(face);
+    }
+
+    fn planar(
+        &mut self,
+        image: &Image,
+        points: Vec<Vec3i16>,
+        mapping: impl Fn(f32, f32, f32) -> (f32, f32),
+        bias: i32,
+        outward: [f32; 3],
+    ) {
+        let uvs = points
+            .iter()
+            .map(|p| {
+                let (across, down) = mapping(p.x as f32, p.y as f32, p.z as f32);
+                image_uv(image, across, down)
+            })
+            .collect();
+        self.add(Face::textured(points, uvs, image.texture, bias), outward);
+    }
+
+    fn spot_lamps(&mut self, atlas: &CarAtlas) {
+        for (x, y, z) in SPOT_LAMPS {
+            let radius = SPOT_RADIUS;
+            let lens = vec![
+                point(x - radius, y - radius, z),
+                point(x + radius, y - radius, z),
+                point(x - radius, y + radius, z),
+                point(x + radius, y + radius, z),
+            ];
+            let uvs = corners(&atlas.lamp, false).to_vec();
+            self.add(
+                Face::textured(lens, uvs, atlas.lamp.texture, -48),
+                [0.0, 0.0, 1.0],
+            );
+            for segment in 0..SPOT_SEGMENTS {
+                let step = std::f32::consts::TAU / SPOT_SEGMENTS as f32;
+                let (start, end) = (segment as f32 * step, (segment + 1) as f32 * step);
+                let middle = (start + end) / 2.0;
+                let rim = |angle: f32, depth: f32| {
+                    point(
+                        x + angle.cos() * radius,
+                        y - angle.sin() * radius,
+                        z - depth,
+                    )
+                };
+                self.add(
+                    Face::flat(
+                        vec![
+                            rim(start, 0.0),
+                            rim(end, 0.0),
+                            rim(start, SPOT_DEPTH),
+                            rim(end, SPOT_DEPTH),
+                        ],
+                        LAMP_HOUSING,
+                        -46,
+                    ),
+                    [middle.cos(), -middle.sin(), 0.0],
+                );
+            }
+        }
+    }
+
+    fn mirrors(&mut self, atlas: &CarAtlas) {
+        let chrome = corners(&atlas.chrome, false).to_vec();
+        for side in [-1.0f32, 1.0] {
+            let corner = |x: f32, y: f32, z: f32| point(side * x, y, z);
+            let (inner, outer, top, bottom, front, back) = (48.0, 55.0, -58.0, -52.0, 30.0, 26.0);
+            self.add(
+                Face::textured(
+                    vec![
+                        corner(inner, top, front),
+                        corner(outer, top, front),
+                        corner(inner, bottom, front),
+                        corner(outer, bottom, front),
+                    ],
+                    chrome.clone(),
+                    atlas.chrome.texture,
+                    -42,
+                ),
+                [0.0, 0.0, 1.0],
+            );
+            self.add(
+                Face::textured(
+                    vec![
+                        corner(outer, top, front),
+                        corner(outer, top, back),
+                        corner(outer, bottom, front),
+                        corner(outer, bottom, back),
+                    ],
+                    chrome.clone(),
+                    atlas.chrome.texture,
+                    -42,
+                ),
+                [side, 0.0, 0.0],
+            );
+            self.add(
+                Face::textured(
+                    vec![
+                        corner(inner, top, back),
+                        corner(outer, top, back),
+                        corner(inner, top, front),
+                        corner(outer, top, front),
+                    ],
+                    chrome.clone(),
+                    atlas.chrome.texture,
+                    -42,
+                ),
+                [0.0, -1.0, 0.0],
+            );
+            self.add(
+                Face::flat(
+                    vec![
+                        corner(inner, top, back),
+                        corner(outer, top, back),
+                        corner(inner, bottom, back),
+                        corner(outer, bottom, back),
+                    ],
+                    [20, 20, 24],
+                    -42,
+                ),
+                [0.0, 0.0, -1.0],
+            );
+        }
+    }
+
+    fn bumper(&mut self, atlas: &CarAtlas, face_z: f32, wrap_z: f32, top: f32, bottom: f32) {
+        let direction = face_z.signum();
+        let chrome = corners(&atlas.chrome, false).to_vec();
+        let outline = [
+            (-BUMPER_WRAP_X, wrap_z),
+            (-BUMPER_HALF_WIDTH, face_z),
+            (BUMPER_HALF_WIDTH, face_z),
+            (BUMPER_WRAP_X, wrap_z),
+        ];
+        let outward_of = |index: usize| {
+            let ((x0, z0), (x1, z1)) = (outline[index], outline[index + 1]);
+            let (dx, dz) = (x1 - x0, z1 - z0);
+            let length = dx.hypot(dz);
+            (-dz * direction / length, dx * direction / length)
+        };
+        for index in 0..outline.len() - 1 {
+            let ((x0, z0), (x1, z1)) = (outline[index], outline[index + 1]);
+            let (out_x, out_z) = outward_of(index);
+            self.add(
+                Face::textured(
+                    vec![
+                        point(x0, top, z0),
+                        point(x1, top, z1),
+                        point(x0, bottom, z0),
+                        point(x1, bottom, z1),
+                    ],
+                    chrome.clone(),
+                    atlas.chrome.texture,
+                    -40,
+                ),
+                [out_x, 0.0, out_z],
+            );
+            let inset =
+                |x: f32, z: f32| point(x - out_x * BUMPER_DEPTH, top, z - out_z * BUMPER_DEPTH);
+            self.add(
+                Face::textured(
+                    vec![
+                        inset(x0, z0),
+                        inset(x1, z1),
+                        point(x0, top, z0),
+                        point(x1, top, z1),
+                    ],
+                    chrome.clone(),
+                    atlas.chrome.texture,
+                    -40,
+                ),
+                [0.0, -1.0, 0.0],
+            );
+        }
+    }
+
+    fn mudflaps(&mut self, atlas: &CarAtlas) {
+        for wheel_z in [WHEEL_Z, -WHEEL_Z] {
+            for side in [-1.0f32, 1.0] {
+                let z = wheel_z - MUDFLAP_OFFSET;
+                let flap = vec![
+                    point(side * TYRE_INNER, -12.0, z),
+                    point(side * TYRE_OUTER, -12.0, z),
+                    point(side * TYRE_INNER, -1.0, z - 2.0),
+                    point(side * TYRE_OUTER, -1.0, z - 2.0),
+                ];
+                let uvs = corners(&atlas.flap, false).to_vec();
+                self.add(
+                    Face::textured(flap.clone(), uvs, atlas.flap.texture, -40),
+                    [0.0, 0.0, -1.0],
+                );
+                self.add(Face::flat(flap, UNDERBODY, -40), [0.0, 0.0, 1.0]);
+            }
+        }
+    }
+
+    fn sump_guard(&mut self) {
+        self.add(
+            Face::flat(
+                vec![
+                    point(-26.0, -9.0, 108.0),
+                    point(26.0, -9.0, 108.0),
+                    point(-26.0, -4.0, 82.0),
+                    point(26.0, -4.0, 82.0),
+                ],
+                SUMP_GUARD,
+                -30,
+            ),
+            [0.0, 1.0, 0.3],
+        );
+    }
+
+    fn wheel_arch(&mut self, atlas: &CarAtlas, side: f32, wheel_z: f32, stations: [f32; 4]) {
+        let image = side_image(atlas, side);
+        let contour = [
+            (stations[0], SILL),
+            (stations[0], crease(stations[0])),
+            (stations[0], belt(stations[0])),
+            (stations[1], belt(stations[1])),
+            (stations[2], belt(stations[2])),
+            (stations[3], belt(stations[3])),
+            (stations[3], crease(stations[3])),
+            (stations[3], SILL),
+        ];
+        let angles = contour.map(|(z, y)| {
+            let angle = (ARCH_Y - y).atan2(z - wheel_z);
+            if angle < -std::f32::consts::FRAC_PI_2 {
+                angle + std::f32::consts::TAU
+            } else {
+                angle
+            }
+        });
+        let ring = |radius: f32, angle: f32| {
+            (
+                wheel_z + angle.cos() * radius,
+                ARCH_Y - angle.sin() * radius,
+            )
+        };
+        for index in 0..contour.len() - 1 {
+            let (base_a, base_b) = (
+                ring(ARCH_RADIUS, angles[index]),
+                ring(ARCH_RADIUS, angles[index + 1]),
+            );
+            let (outer_a, outer_b) = (contour[index], contour[index + 1]);
+            self.planar(
+                image,
+                vec![
+                    body_point(side, base_a.0, base_a.1),
+                    body_point(side, base_b.0, base_b.1),
+                    body_point(side, outer_a.0, outer_a.1),
+                    body_point(side, outer_b.0, outer_b.1),
+                ],
+                |_, y, z| side_uv(side, z, y),
+                -24,
+                [side, 0.0, 0.0],
+            );
+            let (lip_a, lip_b) = (
+                ring(LIP_RADIUS, angles[index]),
+                ring(LIP_RADIUS, angles[index + 1]),
+            );
+            self.add(
+                Face::textured(
+                    vec![
+                        point(side * FLARE_X, lip_a.1, lip_a.0),
+                        point(side * FLARE_X, lip_b.1, lip_b.0),
+                        body_point(side, base_a.0, base_a.1),
+                        body_point(side, base_b.0, base_b.1),
+                    ],
+                    corners(&atlas.paint, false).to_vec(),
+                    atlas.paint.texture,
+                    -30,
+                ),
+                [side, 0.0, 0.0],
+            );
+        }
+        self.add(
+            Face::flat(
+                vec![
+                    point(side * WELL_X, -40.0, wheel_z + 24.0),
+                    point(side * WELL_X, -40.0, wheel_z - 24.0),
+                    point(side * WELL_X, -10.0, wheel_z + 24.0),
+                    point(side * WELL_X, -10.0, wheel_z - 24.0),
+                ],
+                WHEEL_WELL,
+                60,
+            ),
+            [side, 0.0, 0.0],
+        );
+    }
+
+    fn flank(&mut self, atlas: &CarAtlas, side: f32) {
+        let image = side_image(atlas, side);
+        let column = |z: f32| {
+            [
+                body_point(side, z, belt(z)),
+                body_point(side, z, crease(z)),
+                body_point(side, z, SILL),
+            ]
+        };
+        let nose = [
+            point(side * NOSE_HALF_WIDTH, belt(NOSE_Z), NOSE_Z),
+            point(side * NOSE_HALF_WIDTH, crease(NOSE_Z), FRONT),
+            point(side * NOSE_HALF_WIDTH, SILL, CHIN_Z),
+        ];
+        let tail = [
+            point(side * NOSE_HALF_WIDTH, belt(TAIL_TOP_Z), TAIL_TOP_Z),
+            point(side * NOSE_HALF_WIDTH, crease(TAIL_TOP_Z), REAR),
+            point(side * NOSE_HALF_WIDTH, TAIL_BOTTOM_Y, TAIL_BOTTOM_Z),
+        ];
+        self.strip(image, side, nose, column(SIDE_FRONT), [side, 0.0, 1.0], -26);
+        for pair in MID_STATIONS.windows(2) {
+            self.strip(
+                image,
+                side,
+                column(pair[0]),
+                column(pair[1]),
+                [side, 0.0, 0.0],
+                -24,
+            );
+        }
+        self.strip(
+            image,
+            side,
+            column(TAIL_STATIONS[0]),
+            column(TAIL_STATIONS[1]),
+            [side, 0.0, 0.0],
+            -24,
+        );
+        self.strip(image, side, column(SIDE_REAR), tail, [side, 0.0, -1.0], -26);
+    }
+
+    fn strip(
+        &mut self,
+        image: &Image,
+        side: f32,
+        front: [Vec3i16; 3],
+        rear: [Vec3i16; 3],
+        outward: [f32; 3],
+        bias: i32,
+    ) {
+        for band in 0..2 {
+            self.planar(
+                image,
+                vec![front[band], rear[band], front[band + 1], rear[band + 1]],
+                |_, y, z| side_uv(side, z, y),
+                bias,
+                outward,
+            );
+        }
+    }
+
+    fn nose_and_tail(&mut self, atlas: &CarAtlas) {
+        for side in [-1.0f32, 1.0] {
+            let front_uv = |x: f32, y: f32, _: f32| {
+                (
+                    0.5 - x / (2.0 * NOSE_HALF_WIDTH),
+                    (y - crown(NOSE_Z)) / (SILL - crown(NOSE_Z)),
+                )
+            };
+            let nose_rows = [
+                (
+                    point(side * NOSE_HALF_WIDTH, belt(NOSE_Z), NOSE_Z),
+                    point(0.0, crown(NOSE_Z), NOSE_Z),
+                ),
+                (
+                    point(side * NOSE_HALF_WIDTH, crease(NOSE_Z), FRONT),
+                    point(0.0, crease(NOSE_Z), FRONT),
+                ),
+                (
+                    point(side * NOSE_HALF_WIDTH, SILL, CHIN_Z),
+                    point(0.0, SILL, CHIN_Z),
+                ),
+            ];
+            for pair in nose_rows.windows(2) {
+                self.planar(
+                    &atlas.front,
+                    vec![pair[0].0, pair[0].1, pair[1].0, pair[1].1],
+                    front_uv,
+                    -24,
+                    [0.0, 0.0, 1.0],
+                );
+            }
+
+            let rear_uv = |x: f32, y: f32, _: f32| {
+                (
+                    0.5 + x / (2.0 * NOSE_HALF_WIDTH),
+                    (y - crown(TAIL_TOP_Z)) / (TAIL_BOTTOM_Y - crown(TAIL_TOP_Z)),
+                )
+            };
+            let tail_rows = [
+                (
+                    point(side * NOSE_HALF_WIDTH, belt(TAIL_TOP_Z), TAIL_TOP_Z),
+                    point(0.0, crown(TAIL_TOP_Z), TAIL_TOP_Z),
+                ),
+                (
+                    point(side * NOSE_HALF_WIDTH, crease(TAIL_TOP_Z), REAR),
+                    point(0.0, crease(TAIL_TOP_Z), REAR),
+                ),
+                (
+                    point(side * NOSE_HALF_WIDTH, TAIL_BOTTOM_Y, TAIL_BOTTOM_Z),
+                    point(0.0, TAIL_BOTTOM_Y, TAIL_BOTTOM_Z),
+                ),
+            ];
+            for pair in tail_rows.windows(2) {
+                self.planar(
+                    &atlas.rear,
+                    vec![pair[0].0, pair[0].1, pair[1].0, pair[1].1],
+                    rear_uv,
+                    -24,
+                    [0.0, 0.0, -1.0],
+                );
+            }
+
+            let bonnet_uv = |x: f32, _: f32, z: f32| {
+                (0.5 + x / (2.0 * BELT_X), (NOSE_Z - z) / (NOSE_Z - SCUTTLE))
+            };
+            let bonnet_rows = [
+                (NOSE_Z, NOSE_HALF_WIDTH),
+                (BONNET_MIDDLE, BELT_X),
+                (SCUTTLE, BELT_X),
+            ];
+            for pair in bonnet_rows.windows(2) {
+                let ((front_z, front_width), (rear_z, rear_width)) = (pair[0], pair[1]);
+                self.planar(
+                    &atlas.bonnet,
+                    vec![
+                        point(0.0, crown(front_z), front_z),
+                        point(side * front_width, belt(front_z), front_z),
+                        point(0.0, crown(rear_z), rear_z),
+                        point(side * rear_width, belt(rear_z), rear_z),
+                    ],
+                    bonnet_uv,
+                    -24,
+                    [0.0, -1.0, 0.0],
+                );
+            }
+            self.planar(
+                &atlas.bonnet,
+                vec![
+                    point(side * NOSE_HALF_WIDTH, belt(NOSE_Z), NOSE_Z),
+                    point(side * BELT_X, belt(SIDE_FRONT), SIDE_FRONT),
+                    point(side * BELT_X, belt(BONNET_MIDDLE), BONNET_MIDDLE),
+                ],
+                bonnet_uv,
+                -24,
+                [0.0, -1.0, 0.0],
+            );
+
+            let boot_uv = |x: f32, _: f32, z: f32| {
+                (0.5 + x / (2.0 * BELT_X), (BOOT - z) / (BOOT - TAIL_TOP_Z))
+            };
+            self.planar(
+                &atlas.paint,
+                vec![
+                    point(0.0, crown(BOOT), BOOT),
+                    point(side * BELT_X, belt(BOOT), BOOT),
+                    point(0.0, crown(TAIL_TOP_Z), TAIL_TOP_Z),
+                    point(side * NOSE_HALF_WIDTH, belt(TAIL_TOP_Z), TAIL_TOP_Z),
+                ],
+                boot_uv,
+                -24,
+                [0.0, -1.0, 0.0],
+            );
+            self.planar(
+                &atlas.paint,
+                vec![
+                    point(side * BELT_X, belt(BOOT), BOOT),
+                    point(side * BELT_X, belt(SIDE_REAR), SIDE_REAR),
+                    point(side * NOSE_HALF_WIDTH, belt(TAIL_TOP_Z), TAIL_TOP_Z),
+                ],
+                boot_uv,
+                -24,
+                [0.0, -1.0, 0.0],
+            );
+        }
+    }
+
+    fn glasshouse(&mut self, atlas: &CarAtlas) {
+        let roof_edge = |side: f32, z: f32| point(side * ROOF_HALF_WIDTH, ROOF, z);
+        let roof_middle = |z: f32| point(0.0, ROOF - CROWN, z);
+        let belt_edge = |side: f32, z: f32| point(side * BELT_X, belt(z), z);
+        let belt_middle = |z: f32| point(0.0, crown(z), z);
+        for side in [-1.0f32, 1.0] {
+            let right = side > 0.0;
+            let windscreen = if right {
+                [
+                    roof_edge(side, ROOF_FRONT),
+                    roof_middle(ROOF_FRONT),
+                    belt_edge(side, SCUTTLE),
+                    belt_middle(SCUTTLE),
+                ]
+            } else {
+                [
+                    roof_middle(ROOF_FRONT),
+                    roof_edge(side, ROOF_FRONT),
+                    belt_middle(SCUTTLE),
+                    belt_edge(side, SCUTTLE),
+                ]
+            };
+            self.add(
+                Face::textured(
+                    windscreen.to_vec(),
+                    corners(&half_image(&atlas.windscreen, !right), false).to_vec(),
+                    atlas.windscreen.texture,
+                    -28,
+                ),
+                [0.0, -0.6, 1.0],
+            );
+            let rear_screen = if right {
+                [
+                    roof_middle(ROOF_REAR),
+                    roof_edge(side, ROOF_REAR),
+                    belt_middle(BOOT),
+                    belt_edge(side, BOOT),
+                ]
+            } else {
+                [
+                    roof_edge(side, ROOF_REAR),
+                    roof_middle(ROOF_REAR),
+                    belt_edge(side, BOOT),
+                    belt_middle(BOOT),
+                ]
+            };
+            self.add(
+                Face::textured(
+                    rear_screen.to_vec(),
+                    corners(&half_image(&atlas.rear_glass, right), false).to_vec(),
+                    atlas.rear_glass.texture,
+                    -28,
+                ),
+                [0.0, -0.6, -1.0],
+            );
+            self.add(
+                Face::textured(
+                    vec![
+                        roof_edge(side, B_PILLAR),
+                        roof_edge(side, ROOF_FRONT),
+                        belt_edge(side, B_PILLAR),
+                        belt_edge(side, SCUTTLE),
+                    ],
+                    corners(&atlas.door_glass, false).to_vec(),
+                    atlas.door_glass.texture,
+                    -28,
+                ),
+                [side, 0.0, 0.0],
+            );
+            self.add(
+                Face::textured(
+                    vec![
+                        roof_edge(side, ROOF_REAR),
+                        roof_edge(side, B_PILLAR),
+                        belt_edge(side, BOOT),
+                        belt_edge(side, B_PILLAR),
+                    ],
+                    corners(&atlas.quarter_glass, false).to_vec(),
+                    atlas.quarter_glass.texture,
+                    -28,
+                ),
+                [side, 0.0, 0.0],
+            );
+            let roof_uv = |x: f32, _: f32, z: f32| {
+                (
+                    0.5 + x / (2.0 * ROOF_HALF_WIDTH),
+                    (ROOF_FRONT - z) / (ROOF_FRONT - ROOF_REAR),
+                )
+            };
+            for pair in [ROOF_FRONT, B_PILLAR, ROOF_REAR].windows(2) {
+                self.planar(
+                    &atlas.roof,
+                    vec![
+                        roof_middle(pair[0]),
+                        roof_edge(side, pair[0]),
+                        roof_middle(pair[1]),
+                        roof_edge(side, pair[1]),
+                    ],
+                    roof_uv,
+                    -26,
+                    [0.0, -1.0, 0.0],
+                );
+            }
+        }
+    }
+
+    fn underside(&mut self) {
+        self.add(
+            Face::flat(
+                vec![
+                    point(-SILL_X, SILL, SIDE_FRONT),
+                    point(SILL_X, SILL, SIDE_FRONT),
+                    point(-SILL_X, SILL, SIDE_REAR),
+                    point(SILL_X, SILL, SIDE_REAR),
+                ],
+                UNDERBODY,
+                0,
+            ),
+            [0.0, 1.0, 0.0],
+        );
+    }
+
+    fn tyres(&mut self) {
+        for wheel_z in [WHEEL_Z, -WHEEL_Z] {
+            for side in [-1.0f32, 1.0] {
+                for segment in 0..TYRE_SEGMENTS {
+                    let step = std::f32::consts::TAU / TYRE_SEGMENTS as f32;
+                    let (start, end) = (segment as f32 * step, (segment + 1) as f32 * step);
+                    let middle = (start + end) / 2.0;
+                    let tread = |x: f32, angle: f32| {
+                        point(
+                            side * x,
+                            WHEEL_Y - angle.sin() * WHEEL_RADIUS,
+                            wheel_z + angle.cos() * WHEEL_RADIUS,
+                        )
+                    };
+                    let mut face = Face::flat(
+                        vec![
+                            tread(TYRE_OUTER, start),
+                            tread(TYRE_OUTER, end),
+                            tread(TYRE_INNER, start),
+                            tread(TYRE_INNER, end),
+                        ],
+                        RUBBER,
+                        -22,
+                    );
+                    face.wheel = true;
+                    self.add(face, [0.0, -middle.sin(), middle.cos()]);
+                }
+            }
+        }
+    }
+}
+
+fn side_image(atlas: &CarAtlas, side: f32) -> &Image {
+    if side > 0.0 {
+        &atlas.side_right
+    } else {
+        &atlas.side_left
+    }
+}
+
+fn side_uv(side: f32, z: f32, y: f32) -> (f32, f32) {
+    let along = (z - REAR) / (FRONT - REAR);
+    let top = belt(z);
+    let down = (y - top) / (SILL - top);
+    if side > 0.0 {
+        (along, down)
+    } else {
+        (1.0 - along, down)
+    }
+}
 
 impl CarMesh {
     pub fn build(atlas: &CarAtlas) -> Self {
-        let mut faces = Vec::new();
-        let mut textured = |points: [Vec3i16; 4], image: &Image, mirror: bool, bias: i32| {
-            faces.push(Face {
-                normal: normal(&points),
-                points: points.to_vec(),
-                uvs: corners(image, mirror).to_vec(),
-                texture: Some(image.texture),
-                flat: [128, 128, 128],
-                bias,
-                wheel: false,
-            });
-        };
-        let w = HALF_WIDTH;
-        let rw = ROOF_HALF_WIDTH;
-        let (nose, scuttle, boot, tail) = (
-            beltline(FRONT),
-            beltline(SCUTTLE),
-            beltline(BOOT),
-            beltline(REAR),
-        );
-
-        let nw = w - 8;
-        let shoulder = beltline(FRONT - CHAMFER);
-        let crease = nose - 2;
-        textured(
-            [
-                v(-nw, nose, FRONT),
-                v(0, crease, FRONT),
-                v(-w, shoulder, FRONT - CHAMFER),
-                v(0, crease - 1, FRONT - CHAMFER),
-            ],
-            &half_image(&atlas.bonnet, false, 0, 6),
-            false,
-            -24,
-        );
-        textured(
-            [
-                v(0, crease, FRONT),
-                v(nw, nose, FRONT),
-                v(0, crease - 1, FRONT - CHAMFER),
-                v(w, shoulder, FRONT - CHAMFER),
-            ],
-            &half_image(&atlas.bonnet, true, 0, 6),
-            false,
-            -24,
-        );
-        textured(
-            [
-                v(-w, shoulder, FRONT - CHAMFER),
-                v(0, crease - 1, FRONT - CHAMFER),
-                v(-w, scuttle, SCUTTLE),
-                v(0, scuttle - 2, SCUTTLE),
-            ],
-            &half_image(&atlas.bonnet, false, 6, 63),
-            false,
-            -24,
-        );
-        textured(
-            [
-                v(0, crease - 1, FRONT - CHAMFER),
-                v(w, shoulder, FRONT - CHAMFER),
-                v(0, scuttle - 2, SCUTTLE),
-                v(w, scuttle, SCUTTLE),
-            ],
-            &half_image(&atlas.bonnet, true, 6, 63),
-            false,
-            -24,
-        );
-        textured(
-            [
-                v(nw, nose, FRONT),
-                v(-nw, nose, FRONT),
-                v(nw, SILL, FRONT + 2),
-                v(-nw, SILL, FRONT + 2),
-            ],
-            &atlas.front,
-            false,
-            -26,
-        );
-        for side in [-1i16, 1] {
-            let points = [
-                v(side * nw, nose, FRONT),
-                v(side * w, shoulder, FRONT - CHAMFER),
-                v(side * nw, SILL, FRONT + 2),
-                v(side * w, SILL, FRONT - CHAMFER),
-            ];
-            let points = if side < 0 {
-                points
-            } else {
-                [points[1], points[0], points[3], points[2]]
-            };
-            textured(points, &atlas.paint, false, -26);
+        let mut mesh = MeshBuilder { faces: Vec::new() };
+        mesh.spot_lamps(atlas);
+        mesh.mirrors(atlas);
+        let (face_z, wrap_z, top, bottom) = FRONT_BUMPER;
+        mesh.bumper(atlas, face_z, wrap_z, top, bottom);
+        let (face_z, wrap_z, top, bottom) = REAR_BUMPER;
+        mesh.bumper(atlas, face_z, wrap_z, top, bottom);
+        mesh.mudflaps(atlas);
+        mesh.sump_guard();
+        for side in [-1.0f32, 1.0] {
+            mesh.wheel_arch(atlas, side, WHEEL_Z, FRONT_ARCH);
+            mesh.wheel_arch(atlas, side, -WHEEL_Z, REAR_ARCH);
         }
-        textured(
-            [
-                v(-w, boot, BOOT),
-                v(w, boot, BOOT),
-                v(-w, tail, REAR),
-                v(w, tail, REAR),
-            ],
-            &atlas.paint,
-            false,
-            -24,
-        );
-        textured(
-            [
-                v(-w, tail, REAR),
-                v(w, tail, REAR),
-                v(-w, SILL, REAR - 2),
-                v(w, SILL, REAR - 2),
-            ],
-            &atlas.rear,
-            false,
-            -26,
-        );
-
-        textured(
-            [
-                v(rw, ROOF, ROOF_FRONT),
-                v(-rw, ROOF, ROOF_FRONT),
-                v(w, scuttle, SCUTTLE),
-                v(-w, scuttle, SCUTTLE),
-            ],
-            &atlas.windscreen,
-            false,
-            -28,
-        );
-        textured(
-            [
-                v(-rw, ROOF, ROOF_REAR),
-                v(rw, ROOF, ROOF_REAR),
-                v(-w, boot, BOOT),
-                v(w, boot, BOOT),
-            ],
-            &atlas.rear_glass,
-            false,
-            -28,
-        );
-        textured(
-            [
-                v(rw, ROOF, ROOF_REAR),
-                v(rw, ROOF, ROOF_FRONT),
-                v(w, boot, BOOT),
-                v(w, scuttle, SCUTTLE),
-            ],
-            &atlas.side_glass,
-            false,
-            -28,
-        );
-        textured(
-            [
-                v(-rw, ROOF, ROOF_FRONT),
-                v(-rw, ROOF, ROOF_REAR),
-                v(-w, scuttle, SCUTTLE),
-                v(-w, boot, BOOT),
-            ],
-            &atlas.side_glass,
-            true,
-            -28,
-        );
-
-        let mut sculpted_faces: Vec<Face> = Vec::new();
-        let mut sculpted = |points: [Vec3i16; 4], uvs: [(u8, u8); 4], image: &Image, bias: i32| {
-            sculpted_faces.push(Face {
-                normal: normal(&points),
-                points: points.to_vec(),
-                uvs: uvs.to_vec(),
-                texture: Some(image.texture),
-                flat: [128, 128, 128],
-                bias,
-                wheel: false,
-            });
-        };
-        let stations: [(i16, i16); 6] = [
-            (FRONT - CHAMFER, 0),
-            (66, 1),
-            (SCUTTLE, 1),
-            (-40, 1),
-            (-90, 3),
-            (REAR, 1),
-        ];
-        for side in [-1i16, 1] {
-            let image = if side > 0 {
-                &atlas.side_right
-            } else {
-                &atlas.side_left
-            };
-            let u_at = |z: i16| {
-                let u =
-                    ((z as f32 + SIDE_LENGTH / 2.0) / SIDE_LENGTH * 255.0).clamp(0.0, 255.0) as u8;
-                if side > 0 {
-                    image.u.wrapping_add(u)
-                } else {
-                    image.u.wrapping_add(255 - u)
-                }
-            };
-            let v_at = |fraction: f32| image.v + (fraction * 31.0) as u8;
-            let profile = |z: i16, bulge: i16| {
-                let top = if z >= FRONT - CHAMFER {
-                    shoulder
-                } else {
-                    beltline(z)
-                };
-                let crease = top + ((SILL - top) as f32 * CREASE) as i16;
-                [
-                    (side * (w + bulge / 2), top, 0.0),
-                    (side * (w + bulge), crease, CREASE),
-                    (side * (w - 2), SILL, 1.0),
-                ]
-            };
-            for pair in stations.windows(2) {
-                let ((front_z, front_bulge), (rear_z, rear_bulge)) = (pair[0], pair[1]);
-                let (front, rear) = (profile(front_z, front_bulge), profile(rear_z, rear_bulge));
-                for band in 0..2 {
-                    let corner = |row: &[(i16, i16, f32); 3], index: usize, z: i16| {
-                        let (x, y, fraction) = row[index];
-                        (v(x, y, z), (u_at(z), v_at(fraction)))
-                    };
-                    let (front_top, front_bottom) = (
-                        corner(&front, band, front_z),
-                        corner(&front, band + 1, front_z),
-                    );
-                    let (rear_top, rear_bottom) =
-                        (corner(&rear, band, rear_z), corner(&rear, band + 1, rear_z));
-                    let ordered = if side > 0 {
-                        [rear_top, front_top, rear_bottom, front_bottom]
-                    } else {
-                        [front_top, rear_top, front_bottom, rear_bottom]
-                    };
-                    sculpted(
-                        ordered.map(|(point, _)| point),
-                        ordered.map(|(_, uv)| uv),
-                        image,
-                        -24,
-                    );
-                }
-            }
+        mesh.glasshouse(atlas);
+        mesh.nose_and_tail(atlas);
+        for side in [-1.0f32, 1.0] {
+            mesh.flank(atlas, side);
         }
-        let [roof_a, roof_b, roof_c, roof_d] = corners(&atlas.roof, false);
-        let middle = ((roof_a.0 as u16 + roof_b.0 as u16) / 2) as u8;
-        let crown = ROOF - 3;
-        sculpted(
-            [
-                v(rw, ROOF, ROOF_REAR),
-                v(0, crown, ROOF_REAR),
-                v(rw, ROOF, ROOF_FRONT),
-                v(0, crown, ROOF_FRONT),
-            ],
-            [roof_a, (middle, roof_a.1), roof_c, (middle, roof_c.1)],
-            &atlas.roof,
-            -26,
-        );
-        sculpted(
-            [
-                v(0, crown, ROOF_REAR),
-                v(-rw, ROOF, ROOF_REAR),
-                v(0, crown, ROOF_FRONT),
-                v(-rw, ROOF, ROOF_FRONT),
-            ],
-            [(middle, roof_b.1), roof_b, (middle, roof_d.1), roof_d],
-            &atlas.roof,
-            -26,
-        );
-
-        for z in [FRONT + 4, REAR - 4] {
-            let front = z > 0;
-            let (a, b) = if front {
-                (w + 2, -w - 2)
-            } else {
-                (-w - 2, w + 2)
-            };
-            textured(
-                [v(a, -25, z), v(b, -25, z), v(a, -18, z), v(b, -18, z)],
-                &atlas.chrome,
-                false,
-                -40,
-            );
-            let inner = if front { z - 4 } else { z + 4 };
-            let (near, far) = if front { (z, inner) } else { (inner, z) };
-            textured(
-                [
-                    v(-w - 2, -25, near),
-                    v(w + 2, -25, near),
-                    v(-w - 2, -25, far),
-                    v(w + 2, -25, far),
-                ],
-                &atlas.chrome,
-                false,
-                -40,
-            );
-        }
-
-        for (x, y, z, radius) in [
-            (-17i16, -35i16, FRONT + 6, 8i16),
-            (17, -35, FRONT + 6, 8),
-            (-17, -20, FRONT + 9, 8),
-            (17, -20, FRONT + 9, 8),
-        ] {
-            textured(
-                [
-                    v(x + radius, y - radius, z),
-                    v(x - radius, y - radius, z),
-                    v(x + radius, y + radius, z),
-                    v(x - radius, y + radius, z),
-                ],
-                &atlas.lamp,
-                false,
-                -48,
-            );
-        }
-
-        for side in [-1i16, 1] {
-            let (outer, inner) = (side * 54, side * 40);
-            let z = -(WHEEL_Z as i16) - 24;
-            let (a, b) = if side < 0 {
-                (outer, inner)
-            } else {
-                (inner, outer)
-            };
-            textured(
-                [v(a, -26, z), v(b, -26, z), v(a, -3, z - 2), v(b, -3, z - 2)],
-                &atlas.flap,
-                false,
-                -40,
-            );
-        }
-
-        let mut flat = |points: [Vec3i16; 4], color: Rgb, bias: i32| {
-            faces.push(Face {
-                normal: normal(&points),
-                points: points.to_vec(),
-                uvs: vec![(0, 0); 4],
-                texture: None,
-                flat: color,
-                bias,
-                wheel: false,
-            });
-        };
-        flat(
-            [
-                v(-w, SILL, FRONT),
-                v(w, SILL, FRONT),
-                v(-w, SILL, REAR),
-                v(w, SILL, REAR),
-            ],
-            [20, 20, 22],
-            0,
-        );
-        let mut oriented = |points: Vec<Vec3i16>,
-                            uvs: Vec<(u8, u8)>,
-                            texture: Option<Texture>,
-                            color: Rgb,
-                            bias: i32,
-                            center: (f32, f32, f32)| {
-            let count = points.len() as f32;
-            let centroid = points.iter().fold((0.0, 0.0, 0.0), |acc, p| {
-                (
-                    acc.0 + p.x as f32 / count,
-                    acc.1 + p.y as f32 / count,
-                    acc.2 + p.z as f32 / count,
-                )
-            });
-            let outward = (
-                centroid.0 - center.0,
-                centroid.1 - center.1,
-                centroid.2 - center.2,
-            );
-            let mut points = points;
-            let mut uvs = uvs;
-            let n = normal(&points);
-            if n.x as f32 * outward.0 + n.y as f32 * outward.1 + n.z as f32 * outward.2 < 0.0 {
-                points.swap(0, 1);
-                uvs.swap(0, 1);
-                if points.len() == 4 {
-                    points.swap(2, 3);
-                    uvs.swap(2, 3);
-                }
-            }
-            faces.push(Face {
-                normal: normal(&points),
-                points,
-                uvs,
-                texture,
-                flat: color,
-                bias,
-                wheel: color == RUBBER,
-            });
-        };
-        let rubber = RUBBER;
-        for (x, z) in [(-1.0f32, 1.0f32), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
-            let center_z = z * WHEEL_Z;
-            let (outer, inner) = (x * 55.0, x * 44.0);
-            for segment in 0..8 {
-                let a0 = segment as f32 / 8.0 * std::f32::consts::TAU;
-                let a1 = (segment + 1) as f32 / 8.0 * std::f32::consts::TAU;
-                let at = |x: f32, angle: f32| {
-                    v(
-                        x as i16,
-                        (WHEEL_Y - angle.sin() * WHEEL_RADIUS) as i16,
-                        (center_z + angle.cos() * WHEEL_RADIUS) as i16,
-                    )
-                };
-                oriented(
-                    vec![at(outer, a0), at(outer, a1), at(inner, a0), at(inner, a1)],
-                    vec![(0, 0); 4],
-                    None,
-                    rubber,
-                    -22,
-                    ((outer + inner) / 2.0, WHEEL_Y, center_z),
-                );
-            }
-            for segment in 0..4 {
-                let a0 = 0.35 + segment as f32 / 4.0 * 2.45;
-                let a1 = 0.35 + (segment + 1) as f32 / 4.0 * 2.45;
-                let at = |x: f32, radius: f32, angle: f32| {
-                    v(
-                        x as i16,
-                        (WHEEL_Y - angle.sin() * radius) as i16,
-                        (center_z + angle.cos() * radius) as i16,
-                    )
-                };
-                oriented(
-                    vec![
-                        at(x * 57.0, 25.0, a0),
-                        at(x * 57.0, 25.0, a1),
-                        at(x * 51.0, 24.0, a0),
-                        at(x * 51.0, 24.0, a1),
-                    ],
-                    corners(&atlas.paint, false).to_vec(),
-                    Some(atlas.paint.texture),
-                    [128, 128, 128],
-                    -27,
-                    (x * 40.0, WHEEL_Y, center_z),
-                );
-            }
-        }
-        for x in [-1.0f32, 1.0] {
-            let center = (x * 57.0, -50.0, 22.0);
-            let box_point = |dx: f32, dy: f32, dz: f32| {
-                v(
-                    (center.0 + dx * x) as i16,
-                    (center.1 + dy) as i16,
-                    (center.2 + dz) as i16,
-                )
-            };
-            let chrome = corners(&atlas.chrome, false).to_vec();
-            let chrome_texture = Some(atlas.chrome.texture);
-            oriented(
-                vec![
-                    box_point(4.0, -3.0, 2.0),
-                    box_point(-3.0, -3.0, 2.0),
-                    box_point(4.0, 3.0, 2.0),
-                    box_point(-3.0, 3.0, 2.0),
-                ],
-                chrome.clone(),
-                chrome_texture,
-                [128; 3],
-                -42,
-                center,
-            );
-            oriented(
-                vec![
-                    box_point(4.0, -3.0, -2.0),
-                    box_point(4.0, -3.0, 2.0),
-                    box_point(4.0, 3.0, -2.0),
-                    box_point(4.0, 3.0, 2.0),
-                ],
-                chrome.clone(),
-                chrome_texture,
-                [128; 3],
-                -42,
-                center,
-            );
-            oriented(
-                vec![
-                    box_point(-3.0, -3.0, -2.0),
-                    box_point(4.0, -3.0, -2.0),
-                    box_point(-3.0, 3.0, -2.0),
-                    box_point(4.0, 3.0, -2.0),
-                ],
-                vec![(0, 0); 4],
-                None,
-                [20, 20, 24],
-                -42,
-                center,
-            );
-            oriented(
-                vec![
-                    box_point(-3.0, -3.0, 2.0),
-                    box_point(4.0, -3.0, 2.0),
-                    box_point(-3.0, -3.0, -2.0),
-                    box_point(4.0, -3.0, -2.0),
-                ],
-                chrome.clone(),
-                chrome_texture,
-                [128; 3],
-                -42,
-                center,
-            );
-        }
-        oriented(
-            vec![
-                v(-30, -17, FRONT + 4),
-                v(30, -17, FRONT + 4),
-                v(-30, -6, FRONT - 24),
-                v(30, -6, FRONT - 24),
-            ],
-            vec![(0, 0); 4],
-            None,
-            [150, 150, 156],
-            -30,
-            (0.0, -60.0, 60.0),
-        );
-        for (px, py, pz) in [
-            (-17.0f32, -35.0f32, (FRONT + 6) as f32),
-            (17.0, -35.0, (FRONT + 6) as f32),
-            (-17.0, -20.0, (FRONT + 9) as f32),
-            (17.0, -20.0, (FRONT + 9) as f32),
-        ] {
-            for segment in 0..6 {
-                let a0 = segment as f32 / 6.0 * std::f32::consts::TAU;
-                let a1 = (segment + 1) as f32 / 6.0 * std::f32::consts::TAU;
-                let at = |angle: f32, depth: f32| {
-                    v(
-                        (px + angle.cos() * 8.0) as i16,
-                        (py - angle.sin() * 8.0) as i16,
-                        (pz - depth) as i16,
-                    )
-                };
-                oriented(
-                    vec![at(a0, 0.0), at(a1, 0.0), at(a0, 6.0), at(a1, 6.0)],
-                    vec![(0, 0); 4],
-                    None,
-                    [24, 24, 26],
-                    -46,
-                    (px, py, pz - 3.0),
-                );
-            }
-        }
-        faces.extend(sculpted_faces);
+        mesh.underside();
+        mesh.tyres();
         Self {
-            faces,
+            faces: mesh.faces,
             wheel: atlas.wheel,
         }
     }
@@ -1041,16 +1321,19 @@ impl CarMesh {
         sun: Rgb,
         ambient: Rgb,
     ) {
-        let body = car.rotation();
-        let wheels = car.wheel_rotation();
-        for wheel_pass in [true, false] {
-            let (rotation, origin) = if wheel_pass {
-                (wheels, car.wheel_origin())
+        let placement = |wheel: bool| {
+            if wheel {
+                (car.wheel_rotation(), car.wheel_origin())
             } else {
-                (body, car.origin())
-            };
+                (car.rotation(), car.origin())
+            }
+        };
+        let mut queue: Vec<Queued> = Vec::new();
+        for wheel_pass in [false, true] {
+            let (rotation, origin) = placement(wheel_pass);
             renderer.set_object(origin, rotation);
             renderer.set_lighting(rotation, sun_direction, sun, ambient);
+            let wheel_bias = if wheel_pass { WHEEL_BIAS } else { 0 };
             for face in self.faces.iter().filter(|face| face.wheel == wheel_pass) {
                 renderer.gte.rgbc = [face.flat[0], face.flat[1], face.flat[2], 0];
                 let lit = renderer.gte.nccs(face.normal);
@@ -1060,24 +1343,24 @@ impl CarMesh {
                     .zip(&face.uvs)
                     .map(|(&p, &uv)| Point::new(p, lit, uv))
                     .collect();
-                if renderer.backface(&points) {
-                    continue;
-                }
                 let surface = match face.texture {
                     Some(texture) => Surface::textured(texture),
                     None => Surface::flat(),
                 };
-                let wheel_bias = if wheel_pass { WHEEL_BIAS } else { 0 };
-                renderer.polygon(&points, surface, face.bias + wheel_bias + CAR_BIAS, 0);
+                queue.extend(Queued::new(
+                    renderer,
+                    points,
+                    surface,
+                    face.bias + wheel_bias,
+                    wheel_pass,
+                ));
             }
         }
-        renderer.set_object(car.wheel_origin(), wheels);
-        renderer.set_lighting(wheels, sun_direction, sun, ambient);
 
         let (sin, cos) = (car.wheel_spin.sin(), car.wheel_spin.cos());
         for (x, z) in [(-1.0f32, 1.0f32), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
             let center_z = z * WHEEL_Z;
-            let outer = (x * 56.0) as i16;
+            let outer = (x * TYRE_OUTER) as i16;
             let corner = |dy: f32, dz: f32| {
                 let ry = dy * cos - dz * sin;
                 let rz = dy * sin + dz * cos;
@@ -1102,16 +1385,59 @@ impl CarMesh {
                 .zip(uvs)
                 .map(|(&(dy, dz), uv)| Point::new(corner(dy, dz), lit, uv))
                 .collect();
-            if renderer.backface(&points) {
-                continue;
-            }
-            renderer.polygon(
-                &points,
+            queue.extend(Queued::new(
+                renderer,
+                points,
                 Surface::textured(image.texture),
-                -30 + WHEEL_BIAS + CAR_BIAS,
-                0,
-            );
+                -30 + WHEEL_BIAS,
+                true,
+            ));
         }
+
+        queue.sort_by_key(|queued| queued.depth);
+        let mut placed = None;
+        for queued in queue {
+            if placed != Some(queued.wheel) {
+                let (rotation, origin) = placement(queued.wheel);
+                renderer.set_object(origin, rotation);
+                placed = Some(queued.wheel);
+            }
+            renderer.polygon(&queued.points, queued.surface, queued.bias + CAR_BIAS, 0);
+        }
+    }
+}
+
+struct Queued {
+    points: Vec<Point>,
+    surface: Surface,
+    bias: i32,
+    wheel: bool,
+    depth: i32,
+}
+
+impl Queued {
+    fn new(
+        renderer: &mut Renderer,
+        points: Vec<Point>,
+        surface: Surface,
+        bias: i32,
+        wheel: bool,
+    ) -> Option<Self> {
+        if renderer.backface(&points) {
+            return None;
+        }
+        let total: i32 = points
+            .iter()
+            .map(|point| renderer.depth_of(point.position) as i32)
+            .sum();
+        let depth = total / points.len() as i32 + bias;
+        Some(Self {
+            points,
+            surface,
+            bias,
+            wheel,
+            depth,
+        })
     }
 }
 

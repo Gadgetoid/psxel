@@ -1103,21 +1103,23 @@ fn draw_lamps(
     };
     let white = render_scale([255, 240, 200], strength);
     for side in [-0.27f32, 0.27] {
-        glow(renderer, 2.12, side, 0.55, 0.55, white, -430);
-        glow(renderer, 2.16, side, 0.31, 0.55, white, -430);
+        glow(renderer, 1.92, side, 0.48, 0.5, white, -430);
     }
-    for side in [-0.5f32, 0.5] {
-        glow(renderer, 2.02, side, 0.42, 0.5, white, -430);
+    for side in [-0.31f32, 0.31] {
+        glow(renderer, 1.97, side, 0.22, 0.5, white, -430);
+    }
+    for side in [-0.48f32, 0.48] {
+        glow(renderer, 1.8, side, 0.53, 0.45, white, -430);
     }
     let tail = if braking {
         [255, 40, 30]
     } else {
         [150, 20, 15]
     };
-    for side in [-0.72f32, 0.72] {
+    for side in [-0.51f32, 0.51] {
         glow(
             renderer,
-            -2.02,
+            -2.2,
             side,
             0.55,
             if braking { 0.45 } else { 0.28 },
