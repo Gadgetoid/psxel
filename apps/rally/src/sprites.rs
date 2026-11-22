@@ -4,9 +4,9 @@ use psx_vram::{bgr555, Clut, TexPage, TextureDepth, Vram};
 use crate::biome::Rgb;
 use crate::textures::{Image, FOG_BANDS};
 
-const COLUMN_WIDTH: usize = 32;
-const PAGE_COLUMNS: usize = 4;
-const MAX_SPRITE_WIDTH: usize = 64;
+const UNIT_HALFWORDS: usize = 16;
+const PAGE_UNITS: usize = 4;
+const WINDOW_ALIGN: usize = 64;
 const BANDED_CLUT_AREAS: [(u16, u16, u16, u16); 2] = [(512, 480, 1024, 512), (0, 486, 512, 506)];
 const PLAIN_CLUT_AREAS: [(u16, u16, u16, u16); 1] = [(0, 506, 512, 512)];
 const WIDE_PAGES: [(u8, u8, usize); 2] = [(15, 1, 224), (15, 0, 256)];
@@ -112,8 +112,9 @@ impl ClutArea {
 }
 
 struct Column {
-    page: TexPage,
-    u: usize,
+    page_x: u8,
+    page_y: u8,
+    unit: usize,
     used: usize,
     limit: usize,
 }
@@ -137,10 +138,11 @@ impl Default for SpriteSheet {
                 {
                     continue;
                 }
-                for unit in 0..PAGE_COLUMNS {
+                for unit in 0..PAGE_UNITS {
                     columns.push(Column {
-                        page: TexPage::new(page, row, TextureDepth::Clut8),
-                        u: unit * COLUMN_WIDTH,
+                        page_x: page,
+                        page_y: row,
+                        unit,
                         used: 0,
                         limit,
                     });
@@ -158,14 +160,23 @@ impl Default for SpriteSheet {
 }
 
 impl SpriteSheet {
-    fn place(&mut self, width: usize, height: usize, align: usize) -> (TexPage, usize, usize) {
-        assert!(width <= MAX_SPRITE_WIDTH, "sprite wider than two columns");
-        let span = width.div_ceil(COLUMN_WIDTH);
+    fn place(
+        &mut self,
+        depth: TextureDepth,
+        width: usize,
+        height: usize,
+        align: usize,
+    ) -> (TexPage, usize, usize) {
+        let texels_per_unit = UNIT_HALFWORDS * depth.texels_per_halfword();
+        let span = width.div_ceil(texels_per_unit);
+        assert!(span <= PAGE_UNITS, "sprite wider than a texture page");
+        let u_align = if align > 1 { WINDOW_ALIGN } else { 1 };
         let mut best: Option<(usize, usize, usize)> = None;
         for first in 0..self.columns.len() {
             let start = &self.columns[first];
-            let unit = start.u / COLUMN_WIDTH;
-            if unit + span > PAGE_COLUMNS || !start.u.is_multiple_of(align.min(MAX_SPRITE_WIDTH)) {
+            if start.unit + span > PAGE_UNITS
+                || !(start.unit * texels_per_unit).is_multiple_of(u_align)
+            {
                 continue;
             }
             let units = &self.columns[first..first + span];
@@ -187,13 +198,23 @@ impl SpriteSheet {
         for column in &mut self.columns[first..first + span] {
             column.used = v + height;
         }
-        (self.columns[first].page, self.columns[first].u, v)
+        let column = &self.columns[first];
+        (
+            TexPage::new(column.page_x, column.page_y, depth),
+            column.unit * texels_per_unit,
+            v,
+        )
     }
 
     pub fn add(&mut self, vram: &mut Vram, bytes: &[u8], fog: bool) -> Image {
         let sprite = decode(bytes);
+        let depth = if sprite.palette.len() <= 16 {
+            TextureDepth::Clut4
+        } else {
+            TextureDepth::Clut8
+        };
         let align = if fog { 1 } else { 64 };
-        let (page, column, row) = self.place(sprite.width, sprite.height, align);
+        let (page, column, row) = self.place(depth, sprite.width, sprite.height, align);
         vram.write_texture(page, column, row, sprite.width, &sprite.indices);
         let transparent = fog;
         let colors: Vec<u16> = sprite
@@ -222,6 +243,24 @@ impl SpriteSheet {
             v: row as u8,
             width: sprite.width as u8,
             height: sprite.height as u8,
+            texture: Texture {
+                page,
+                clut,
+                raw: false,
+                window: None,
+            },
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn reserve(&mut self, width: usize, height: usize, entries: usize) -> Image {
+        let (page, column, row) = self.place(TextureDepth::Clut8, width, height, 64);
+        let clut = self.plain_area.allocate(entries);
+        Image {
+            u: column as u8,
+            v: row as u8,
+            width: width as u8,
+            height: height as u8,
             texture: Texture {
                 page,
                 clut,

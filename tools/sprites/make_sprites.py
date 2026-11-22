@@ -19,8 +19,8 @@ SPRITES = [
     ("broadleaf", "summer_tree_*", (64, 128), TREE, None),
     ("autumn", "autumn_tree_*", (64, 128), TREE, None),
     ("bare", "half-bare_autumn_tree_*", (64, 128), TREE, None),
-    ("fir", "fir_tree_*", (64, 128), TREE, None),
-    ("pine", "pind_tree_*", (64, 128), TREE, None),
+    ("fir", "douglas_fir_tree_*", (64, 128), TREE, None),
+    ("pine", "scott_pine_tree_*", (64, 128), TREE, None),
     ("snow_fir", "snowy_fir_tree_*", (64, 128), SNOWY, None),
     ("joshua", "Joshua_tree_*", (64, 128), TREE, None),
     ("cactus", "cactus_*", (32, 64), CACTUS, None),
@@ -52,6 +52,7 @@ GROUNDS = [
     ("ground_grass", "patchy_grass_*", 2, dict(source_metres=4.0, patch_metres=1.2, rotate=True, detail=0.8, macro=0.1)),
     ("ground_wheat", "golden_wheat_stubble_*", 0, dict(source_metres=1.0, patch_metres=0.6, rotate=False, detail=0.8, macro=0.07)),
     ("ground_leaves", "leaf_litter_*", 0, dict(source_metres=0.6, patch_metres=0.35, rotate=True, detail=0.9, macro=0.07)),
+    ("ground_earth", "desert_grass_*", 0, dict(source_metres=3.0, patch_metres=1.0, rotate=True, detail=0.8, macro=0.07)),
     ("ground_snow", "snowy_field_*", 0, dict(source_metres=2.0, patch_metres=1.0, rotate=True, detail=0.6, macro=0.03)),
 ]
 
@@ -85,7 +86,7 @@ HORIZON_COLOURS = 15
 HORIZON_FADE_COLUMNS = 6
 
 WORK_SCALE = 8
-TEXTURE_COLOURS = 48
+TEXTURE_COLOURS = 16
 TEXTURE_SEED = 1997
 MACRO_CYCLES = 3.0
 
@@ -101,7 +102,7 @@ PALE_BASE_CHROMA = 40
 PALE_BASE_FRACTION = 0.4
 CONTRAST = 1.12
 SATURATION = 1.18
-SPRITE_COLOURS = 63
+SPRITE_COLOURS = 15
 SPRITE_DITHER = Image.Dither.NONE
 TEXTURE_CONTRAST = 1.25
 TEXTURE_SATURATION = 1.15
@@ -308,8 +309,11 @@ def indexed_with_transparency(colour, mask):
     return result
 
 
-def indexed_opaque(colour, colours):
-    palette, used = build_palette(colour.reshape(-1, 3), colours)
+def indexed_opaque(colour, colours, reserved=()):
+    palette, used = build_palette(colour.reshape(-1, 3), colours - len(reserved))
+    for reserved_colour in reserved:
+        palette = palette + [int(round(channel)) for channel in reserved_colour]
+        used += 1
     result = Image.fromarray(map_to_palette(colour, palette, used).astype(np.uint8), "P")
     result.putpalette(palette)
     return result
@@ -317,10 +321,12 @@ def indexed_opaque(colour, colours):
 
 def save(image, name):
     path = os.path.join(OUTPUT_DIR, name + ".png")
+    options = {}
+    if len(image.getpalette()) <= 16 * 3:
+        options["bits"] = 4
     if "transparency" in image.info:
-        image.save(path, transparency=image.info["transparency"])
-    else:
-        image.save(path)
+        options["transparency"] = image.info["transparency"]
+    image.save(path, **options)
     return path
 
 
@@ -485,7 +491,7 @@ def tarmac_texture(rgb, settings, rng):
     column = 32
     for row in range(32):
         small[row, column] = small[row, column] * (1 - wear[row]) + paint_colour * wear[row]
-    return np.clip(small, 0, 255).astype(np.uint8)
+    return np.clip(small, 0, 255).astype(np.uint8), paint_colour
 
 
 def rut_strips(rgb, source_metres):
@@ -562,15 +568,17 @@ def direct_texture(rgb, settings):
 
 def road_texture(source_path, settings, rng, snow_sources):
     rgb = load_rgb(source_path)
+    reserved = ()
     if settings["kind"] == "direct":
         small = direct_texture(rgb, settings)
     elif settings["kind"] == "tarmac":
-        small = tarmac_texture(rgb, settings, rng)
+        small, paint_colour = tarmac_texture(rgb, settings, rng)
+        reserved = (paint_colour,)
     elif settings["kind"] == "snow":
         small = snow_texture(rgb, settings, rng, snow_sources)
     else:
         small = surface_texture(rgb, settings, rng)
-    return indexed_opaque(small, TEXTURE_COLOURS)
+    return indexed_opaque(small, TEXTURE_COLOURS, reserved)
 
 
 def ground_texture(source_path, settings, rng, metres=GROUND_METRES, box=None):

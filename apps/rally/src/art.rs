@@ -58,6 +58,7 @@ pub struct Art {
     pub wheat: Image,
     pub leaves: Image,
     pub snow_ground: Image,
+    pub earth: Image,
     pub rock_texture: Image,
     pub horizon_forest: Image,
     pub horizon_farmland: Image,
@@ -110,6 +111,7 @@ impl Art {
         let wheat = sheet.add(vram, sprite!("ground_wheat"), false);
         let leaves = sheet.add(vram, sprite!("ground_leaves"), false);
         let snow_ground = sheet.add(vram, sprite!("ground_snow"), false);
+        let earth = sheet.add(vram, sprite!("ground_earth"), false);
         let rock_texture = sheet.add(vram, sprite!("rock_texture"), false);
         let cliff_desert = family!(
             sheet,
@@ -196,6 +198,7 @@ impl Art {
             wheat,
             leaves,
             snow_ground,
+            earth,
             rock_texture,
             horizon_forest,
             horizon_farmland,
@@ -241,7 +244,7 @@ impl Art {
             Ground::Wheat => Some(&self.wheat),
             Ground::Leaves => Some(&self.leaves),
             Ground::Snow => Some(&self.snow_ground),
-            Ground::Earth => None,
+            Ground::Earth => Some(&self.earth),
         }
     }
 }
