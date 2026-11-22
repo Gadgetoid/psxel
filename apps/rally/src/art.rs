@@ -1,5 +1,6 @@
 use psx_vram::{TextureWindow, Vram};
 
+use crate::blend::{Blends, Sources};
 use crate::sprites::SpriteSheet;
 use crate::textures::Image;
 
@@ -65,6 +66,7 @@ pub struct Art {
     pub horizon_mesas: Image,
     pub horizon_alpine: Image,
     pub cliff_desert: Vec<Image>,
+    pub blends: Blends,
 }
 
 impl Art {
@@ -169,6 +171,27 @@ impl Art {
             "small_rock_2",
             "small_rock_3"
         );
+        let blends = Blends::new(
+            &mut sheet,
+            Sources {
+                grounds: &[
+                    (Ground::Grass, sprite!("ground_grass")),
+                    (Ground::Wheat, sprite!("ground_wheat")),
+                    (Ground::Leaves, sprite!("ground_leaves")),
+                    (Ground::Snow, sprite!("ground_snow")),
+                    (Ground::Earth, sprite!("ground_earth")),
+                ],
+                roads: &[
+                    (Road::Gravel, sprite!("road_gravel_0")),
+                    (Road::Tarmac, sprite!("road_tarmac_0")),
+                    (Road::Sand, sprite!("road_sand_0")),
+                    (Road::Snow, sprite!("road_snow_0")),
+                    (Road::Mud, sprite!("road_mud_0")),
+                ],
+                desert_cliff: sprite!("cliff_desert_0"),
+                rock_cliff: sprite!("rock_texture"),
+            },
+        );
         let horizon_forest = sheet.add_wide(vram, sprite!("horizon_forest"));
         let horizon_farmland = sheet.add_wide(vram, sprite!("horizon_farmland"));
         let horizon_mesas = sheet.add_wide(vram, sprite!("horizon_mesas"));
@@ -205,6 +228,7 @@ impl Art {
             horizon_mesas,
             horizon_alpine,
             cliff_desert,
+            blends,
         }
     }
 

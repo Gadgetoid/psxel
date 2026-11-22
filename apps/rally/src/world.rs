@@ -4,6 +4,7 @@ use psx_vram::Vram;
 
 use crate::art::{tiled, Art};
 use crate::biome::{lerp_rgb, scale_rgb, Horizon, Prop, Rgb, Weather, BIOMES};
+use crate::blend::{Choice, Kind};
 use crate::render::{
     fog_amount, screen_quad, units, world_to_psx, Camera, Point, Renderer, Surface, OT_SIZE,
     PROJECTION_H, SCREEN_HEIGHT, SCREEN_WIDTH,
@@ -523,14 +524,36 @@ impl World {
                 let near_row = index.abs_diff(from_index) <= 3;
                 let row_depth = (centres[row] as u32 + centres[row + 1] as u32) / 2;
                 let (a, b, t) = track.biomes.at(Track::distance(index));
-                let threshold = hash_float(track.seed ^ 0x90ad, index as u64 / 2, 0);
-                let biome = if t > threshold {
-                    &BIOMES[b]
-                } else {
-                    &BIOMES[a]
+                let key = hash_float(track.seed ^ 0x90ad, index as u64 / 2, 0);
+                let pick = |kind: Kind, first: Image, second: Image, tile: bool| match art
+                    .blends
+                    .choose(kind, (a, b), t, key)
+                {
+                    Choice::First => first,
+                    Choice::Second => second,
+                    Choice::Mix(mix) if tile => tiled(&mix),
+                    Choice::Mix(mix) => mix,
                 };
-                let road_image = *art.road(biome.road, hash(track.seed, index as u64 / 2, 77));
-                let ground_image = art.ground(biome.ground).map(tiled);
+                let (first, second) = (&BIOMES[a], &BIOMES[b]);
+                let variant = hash(track.seed, index as u64 / 2, 77);
+                let road_image = pick(
+                    Kind::Road,
+                    *art.road(first.road, variant),
+                    *art.road(second.road, variant),
+                    false,
+                );
+                let ground_image = match (art.ground(first.ground), art.ground(second.ground)) {
+                    (Some(from), Some(to)) => {
+                        Some(pick(Kind::Ground, tiled(from), tiled(to), true))
+                    }
+                    _ => None,
+                };
+                let cliff_image = pick(
+                    Kind::Cliff,
+                    art.cliff(first.ground, index as u64),
+                    art.cliff(second.ground, index as u64),
+                    true,
+                );
                 let strips = sections[row].len() - 1;
                 for strip in 0..strips {
                     let middle = strips / 2;
@@ -544,12 +567,7 @@ impl World {
                     let (image, windowed, bias, shade_scale) = if is_road {
                         (road_image, false, ROAD_BIAS, 1.0)
                     } else if steep {
-                        (
-                            art.cliff(biome.ground, index as u64),
-                            true,
-                            GROUND_BIAS,
-                            0.95,
-                        )
+                        (cliff_image, true, GROUND_BIAS, 0.95)
                     } else if let Some(ground) = ground_image {
                         (
                             ground,
@@ -854,7 +872,11 @@ impl World {
                 ),
                 (
                     vec![top, middle[side], middle[next]],
-                    vec![((u0 + u1) / 2, v0), (u0, v1), (u1, v1)],
+                    vec![
+                        (((u0 as u16 + u1 as u16) / 2) as u8, v0),
+                        (u0, v1),
+                        (u1, v1),
+                    ],
                 ),
             ];
             for (points, uvs) in &mut faces {

@@ -1,5 +1,6 @@
 mod art;
 mod biome;
+mod blend;
 mod car;
 mod daytime;
 mod dial;
@@ -33,6 +34,7 @@ const START_TIME: f32 = 75.0;
 const CHECKPOINT_BONUS: f32 = 32.0;
 const CALL_AHEAD: f32 = 70.0;
 const CALL_SECONDS: f32 = 2.6;
+const BLEND_HOLD: f32 = 300.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -948,6 +950,20 @@ impl Game for Rally {
     fn render(&mut self, framebuffer: &mut Framebuffer) {
         let started = web_time::Instant::now();
         let distance = self.car.distance();
+        let section = self.track.biomes.section(distance);
+        let into = distance - section as f32 * biome::SECTION_LENGTH;
+        let first = if into < BLEND_HOLD && section > 0 {
+            section - 1
+        } else {
+            section
+        };
+        self.art.blends.prepare(
+            &mut self.vram,
+            (
+                self.track.biomes.biome_index(first),
+                self.track.biomes.biome_index(first + 1),
+            ),
+        );
         let lighting = self.lighting(distance);
         self.renderer.begin(&self.camera, lighting.fog);
         let draw_index = self
@@ -1255,6 +1271,11 @@ mod tests {
     #[test]
     fn autopilot_soak_keeps_car_and_camera_sane() {
         let input = Input::default();
+        let mut framebuffer = Framebuffer {
+            width: SCREEN_WIDTH as usize,
+            height: SCREEN_HEIGHT as usize,
+            pixels: vec![0; (SCREEN_WIDTH * SCREEN_HEIGHT) as usize],
+        };
         let mut failures = Vec::new();
         for seed in 0..10u64 {
             let mut rally = Rally::new(seed);
@@ -1263,6 +1284,9 @@ mod tests {
             rally.autopilot = true;
             for tick in 0..3600 {
                 rally.update(&input);
+                if tick % 600 == 0 {
+                    rally.render(&mut framebuffer);
+                }
                 let car = &rally.car;
                 let index = car.index;
                 let ground = rally.track.terrain(car.x, car.z).height;

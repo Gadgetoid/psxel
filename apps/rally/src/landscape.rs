@@ -6,6 +6,7 @@ use psx_vram::Vram;
 
 use crate::art::{tiled, Art};
 use crate::biome::{lerp_rgb, Prop, Rgb, BIOMES};
+use crate::blend::{Choice, Kind};
 use crate::render::{fog_amount, units, world_to_psx, Camera, Point, Renderer, Surface};
 use crate::rng::{hash, hash_float, Rng};
 use crate::sprites::band_image;
@@ -222,11 +223,15 @@ impl Landscape {
                     let average_a = average_of(&image_a);
                     let average_b = average_of(&image_b);
                     let target = lerp_rgb(average_a, average_b, t);
-                    let choose_b = t > hash_float(track.seed ^ 0xb1e7, ix as u64, iz as u64);
-                    let (image, windowed, average) = if choose_b {
-                        (image_b, windowed_b, average_b)
-                    } else {
-                        (image_a, windowed_a, average_a)
+                    let key = hash_float(track.seed ^ 0xb1e7, ix as u64, iz as u64);
+                    let kind = if steep { Kind::Cliff } else { Kind::Ground };
+                    let (image, windowed, average) = match art.blends.choose(kind, (a, b), t, key) {
+                        Choice::First => (image_a, windowed_a, average_a),
+                        Choice::Second => (image_b, windowed_b, average_b),
+                        Choice::Mix(mix) => {
+                            let mix = tiled(&mix);
+                            (mix, true, average_of(&mix))
+                        }
                     };
                     let slope_x =
                         ((heights[1] + heights[3]) - (heights[0] + heights[2])) * 0.5 / size;

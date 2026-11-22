@@ -252,7 +252,6 @@ impl SpriteSheet {
         }
     }
 
-    #[allow(dead_code)]
     pub fn reserve(&mut self, width: usize, height: usize, entries: usize) -> Image {
         let (page, column, row) = self.place(TextureDepth::Clut8, width, height, 64);
         let clut = self.plain_area.allocate(entries);
