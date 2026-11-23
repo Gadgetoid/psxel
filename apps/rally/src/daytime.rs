@@ -5,10 +5,10 @@ const DAY_END: f32 = 0.5;
 const DUSK_END: f32 = 0.62;
 const NIGHT_END: f32 = 0.88;
 
-const NIGHT_SKY_TOP: Rgb = [4, 6, 16];
-const NIGHT_SKY_HORIZON: Rgb = [14, 18, 36];
-const NIGHT_FOG: Rgb = [8, 10, 20];
-const NIGHT_AMBIENT: Rgb = [22, 26, 44];
+const NIGHT_SKY_TOP: Rgb = [10, 14, 32];
+const NIGHT_SKY_HORIZON: Rgb = [28, 34, 60];
+const NIGHT_FOG: Rgb = [18, 22, 40];
+const NIGHT_AMBIENT: Rgb = [40, 46, 74];
 const DUSK_HORIZON: Rgb = [245, 140, 70];
 const DUSK_FOG: Rgb = [160, 95, 75];
 const DUSK_SUN: Rgb = [255, 150, 80];

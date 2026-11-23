@@ -118,7 +118,7 @@ impl Lighting {
     }
 
     pub fn shade(&self) -> f32 {
-        0.12 + 0.88 * self.daylight
+        0.22 + 0.78 * self.daylight
     }
 }
 
