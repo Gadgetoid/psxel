@@ -46,9 +46,15 @@ pub fn decode_wav(bytes: &[u8]) -> Option<Sound> {
 mod backend {
     use std::collections::HashMap;
 
-    use web_sys::{AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode, StereoPannerNode};
+    use web_sys::{
+        AudioBuffer, AudioBufferSourceNode, AudioContext, ConvolverNode, GainNode, StereoPannerNode,
+    };
 
     use super::{Sound, SoundId};
+
+    const REVERB_SECONDS: f32 = 2.6;
+    const REVERB_DECAY: f32 = 6.0;
+    const SEND: f32 = 0.35;
 
     struct Voice {
         sound: SoundId,
@@ -60,6 +66,7 @@ mod backend {
     pub struct Backend {
         context: AudioContext,
         master: GainNode,
+        reverb: Option<(ConvolverNode, GainNode)>,
         buffers: Vec<Option<AudioBuffer>>,
         voices: HashMap<usize, Voice>,
     }
@@ -71,12 +78,81 @@ mod backend {
             master
                 .connect_with_audio_node(&context.destination())
                 .ok()?;
+            let reverb = Self::reverb(&context, &master);
             Some(Self {
                 context,
                 master,
+                reverb,
                 buffers: Vec::new(),
                 voices: HashMap::new(),
             })
+        }
+
+        fn reverb(context: &AudioContext, master: &GainNode) -> Option<(ConvolverNode, GainNode)> {
+            let rate = context.sample_rate();
+            let length = (rate * REVERB_SECONDS) as usize;
+            let response = context.create_buffer(2, length as u32, rate).ok()?;
+            for channel in 0..2 {
+                let mut seed = 0x9e37_79b9u32 ^ (channel as u32 * 0x85eb_ca6b);
+                let samples: Vec<f32> = (0..length)
+                    .map(|index| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 17;
+                        seed ^= seed << 5;
+                        let noise = seed as f32 / u32::MAX as f32 * 2.0 - 1.0;
+                        let time = index as f32 / length as f32;
+                        noise * (-time * REVERB_DECAY).exp()
+                    })
+                    .collect();
+                response.copy_to_channel(&samples, channel).ok()?;
+            }
+            let convolver = context.create_convolver().ok()?;
+            convolver.set_buffer(Some(&response));
+            let wet = context.create_gain().ok()?;
+            wet.gain().set_value(0.0);
+            convolver.connect_with_audio_node(&wet).ok()?;
+            wet.connect_with_audio_node(master).ok()?;
+            Some((convolver, wet))
+        }
+
+        pub fn now(&self) -> f64 {
+            self.context.current_time()
+        }
+
+        pub fn set_reverb(&mut self, level: f32) {
+            if let Some((_, wet)) = &self.reverb {
+                let now = self.context.current_time();
+                let _ = wet.gain().set_target_at_time(level, now, 0.3);
+            }
+        }
+
+        pub fn play_at(
+            &mut self,
+            sounds: &[Sound],
+            id: SoundId,
+            when: f64,
+            volume: f32,
+            send: f32,
+        ) {
+            let Some((source, gain, _)) = self.source(sounds, id, false) else {
+                return;
+            };
+            gain.gain().set_value(volume);
+            self.send(&gain, send);
+            let _ = source.start_with_when(when);
+        }
+
+        fn send(&self, gain: &GainNode, amount: f32) {
+            let Some((convolver, _)) = &self.reverb else {
+                return;
+            };
+            let Ok(send) = self.context.create_gain() else {
+                return;
+            };
+            send.gain().set_value(amount);
+            if gain.connect_with_audio_node(&send).is_ok() {
+                let _ = send.connect_with_audio_node(convolver);
+            }
         }
 
         pub fn resume(&self) {
@@ -151,6 +227,7 @@ mod backend {
                     return;
                 };
                 gain.gain().set_value(0.0);
+                self.send(&gain, SEND);
                 let _ = source.start();
                 self.voices.insert(
                     channel,
@@ -182,6 +259,7 @@ mod backend {
             };
             gain.gain().set_value(volume);
             source.playback_rate().set_value(rate);
+            self.send(&gain, SEND);
             let _ = source.start();
         }
 
@@ -204,6 +282,22 @@ mod backend {
         }
 
         pub fn resume(&self) {}
+
+        pub fn now(&self) -> f64 {
+            0.0
+        }
+
+        pub fn set_reverb(&mut self, _level: f32) {}
+
+        pub fn play_at(
+            &mut self,
+            _sounds: &[Sound],
+            _id: SoundId,
+            _when: f64,
+            _volume: f32,
+            _send: f32,
+        ) {
+        }
 
         pub fn set_loop(
             &mut self,
@@ -282,6 +376,22 @@ impl Audio {
     pub fn set_master(&mut self, volume: f32) {
         if let Some(backend) = &mut self.backend {
             backend.set_master(volume);
+        }
+    }
+
+    pub fn now(&self) -> f64 {
+        self.backend.as_ref().map_or(0.0, |backend| backend.now())
+    }
+
+    pub fn play_at(&mut self, sound: SoundId, when: f64, volume: f32, send: f32) {
+        if let Some(backend) = &mut self.backend {
+            backend.play_at(&self.sounds, sound, when, volume, send);
+        }
+    }
+
+    pub fn set_reverb(&mut self, level: f32) {
+        if let Some(backend) = &mut self.backend {
+            backend.set_reverb(level);
         }
     }
 }
