@@ -16,6 +16,8 @@ const SKID_LOOSE_CHANNEL: usize = 20;
 const SKID_TARMAC_CHANNEL: usize = 21;
 const WIND_CHANNEL: usize = 22;
 const RAIN_CHANNEL: usize = 23;
+const STREAM_CHANNEL: usize = 24;
+const STREAM_VOLUME: f32 = 0.5;
 const MUSIC_CHANNEL: usize = 30;
 const MUSIC_VOLUME: f32 = 0.35;
 
@@ -59,6 +61,7 @@ pub struct Mix {
     pub weather: Option<Weather>,
     pub weather_amount: f32,
     pub engine_volume: f32,
+    pub stream: (f32, f32),
 }
 
 struct Bank {
@@ -68,6 +71,7 @@ struct Bank {
     skid_tarmac: SoundId,
     wind: SoundId,
     rain: SoundId,
+    stream: SoundId,
     thud: SoundId,
     pop: SoundId,
     call: SoundId,
@@ -123,6 +127,7 @@ impl SoundSystem {
             skid_tarmac: audio.load_wav(asset!("rally_skid_tarmac")),
             wind: audio.load_wav(asset!("rally_wind")),
             rain: audio.load_wav(asset!("amb_rain")),
+            stream: audio.load_wav(asset!("temple_stream")),
             thud: audio.load_wav(asset!("rally_thud")),
             pop: audio.load_wav(asset!("rally_pop")),
             call: audio.load_wav(asset!("rally_call")),
@@ -243,6 +248,13 @@ impl SoundSystem {
             0.0
         };
         audio.set_loop(RAIN_CHANNEL, bank.rain, rain, 1.0);
+        audio.set_loop_panned(
+            STREAM_CHANNEL,
+            bank.stream,
+            mix.stream.0 * STREAM_VOLUME,
+            1.0,
+            mix.stream.1,
+        );
         audio.set_loop(
             MUSIC_CHANNEL,
             bank.music,

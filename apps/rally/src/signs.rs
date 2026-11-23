@@ -202,7 +202,7 @@ fn roadside(track: &Track, index: usize) -> Option<RoadSign> {
             Ground::Wheat if pick < 0.5 => SignKind::Cattle,
             Ground::Wheat | Ground::Snow => SignKind::Sheep,
             Ground::Grass | Ground::Leaves if pick < 0.25 => SignKind::Sheep,
-            Ground::Grass | Ground::Leaves | Ground::Jungle => SignKind::Deer,
+            Ground::Grass | Ground::Leaves => SignKind::Deer,
             Ground::Earth => return None,
         };
         return Some(RoadSign::plain(kind));

@@ -9,7 +9,6 @@ pub enum Prop {
     Pine,
     SnowFir,
     Broadleaf,
-    Kapok,
     AutumnTree,
     BareTree,
     Joshua,
@@ -32,7 +31,6 @@ pub fn ground_traits(ground: Ground) -> (f32, f32) {
         Ground::Leaves => (0.45, 3.4),
         Ground::Snow => (0.25, 7.0),
         Ground::Earth => (0.4, 5.5),
-        Ground::Jungle => (0.45, 4.2),
     }
 }
 
@@ -49,7 +47,6 @@ impl Prop {
         matches!(
             self,
             Self::Fir
-                | Self::Kapok
                 | Self::Pine
                 | Self::SnowFir
                 | Self::Broadleaf
@@ -105,7 +102,7 @@ pub struct Biome {
     pub bank_height: f32,
 }
 
-pub const BIOMES: [Biome; 6] = [
+pub const BIOMES: [Biome; 5] = [
     Biome {
         name: "PINE FOREST",
         surface: "GRAVEL",
@@ -273,39 +270,6 @@ pub const BIOMES: [Biome; 6] = [
         grip: 0.58,
         hilliness: 1.2,
         bank_height: 1.5,
-    },
-    Biome {
-        name: "RAINFOREST",
-        surface: "MUD",
-        road: Road::Mud,
-        ground: Ground::Jungle,
-        sky_top: [80, 110, 120],
-        sky_horizon: [175, 195, 175],
-        fog: [120, 145, 120],
-        sun: [215, 225, 185],
-        ambient: [60, 80, 60],
-        ground_dark: [35, 60, 25],
-        ground_light: [90, 130, 55],
-        road_dark: [80, 55, 40],
-        road_light: [150, 105, 75],
-        road_paint: [130, 95, 70],
-        foliage_dark: [15, 50, 20],
-        foliage_light: [60, 140, 50],
-        horizon_color: [45, 80, 55],
-        horizon: Horizon::Hills,
-        dust: [110, 90, 65],
-        props: &[
-            (Prop::Kapok, 4.0),
-            (Prop::Broadleaf, 1.0),
-            (Prop::Bush, 3.0),
-            (Prop::Rock, 0.6),
-            (Prop::Spectator, 0.3),
-        ],
-        density: 0.85,
-        weather: Weather::Rain,
-        grip: 0.55,
-        hilliness: 1.3,
-        bank_height: 3.0,
     },
 ];
 

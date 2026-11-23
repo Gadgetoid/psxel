@@ -642,7 +642,6 @@ pub fn prop_sprite(art: &Art, atlas: &Atlas, prop: Prop, key: u64) -> Option<(Im
         Prop::Pine => (pick(&art.pine), 5.5, 11.0),
         Prop::SnowFir => (pick(&art.snow_fir), 4.5, 9.0),
         Prop::Broadleaf => (pick(&art.broadleaf), 7.0, 14.0),
-        Prop::Kapok => (pick(&art.kapok), 9.0, 18.0),
         Prop::AutumnTree => (pick(&art.autumn), 7.0, 14.0),
         Prop::BareTree => (pick(&art.bare), 7.0, 14.0),
         Prop::Joshua => (pick(&art.joshua), 4.0, 8.0),

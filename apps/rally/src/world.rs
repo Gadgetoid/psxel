@@ -28,16 +28,6 @@ const SIGN_MOUNT: f32 = 1.5;
 const SIGN_POST: f32 = 0.16;
 const SIGN_SETBACK: f32 = 0.8;
 const ROOF_CLEARANCE: f32 = 0.3;
-const TREELINE_SETBACK: f32 = 4.0;
-const TREELINE_SINK: f32 = 0.6;
-const TREELINE_LOW: f32 = 7.0;
-const TREELINE_HIGH: f32 = 12.0;
-const TREELINE_TEXELS: usize = 16;
-const TREELINE_REPEAT: usize = 4;
-const TREELINE_FLOOR: f32 = 0.35;
-const TREELINE_GAP: f32 = 0.18;
-const TREELINE_VINES: f32 = 0.45;
-const VINE_HEIGHT: f32 = 4.0;
 const PRECIPITATION_DROPS: usize = 240;
 const PRECIPITATION_RADIUS: f32 = 24.0;
 const GROUND_BIAS: i32 = 160;
@@ -240,7 +230,6 @@ impl World {
         );
         self.draw_bridges(renderer, art, track, window, lighting);
         self.draw_walls(renderer, art, track, camera, window, lighting);
-        self.draw_treeline(renderer, vram, atlas, art, track, camera, window, lighting);
         self.draw_tunnels(renderer, art, track, window, lighting);
         self.draw_water(renderer, art, track, camera, window, lighting);
         self.draw_props(renderer, atlas, art, track, camera, window, lighting);
@@ -445,133 +434,6 @@ impl World {
                         Surface::textured(material.texture),
                         ROAD_BIAS + 10,
                         1,
-                    );
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn draw_treeline(
-        &self,
-        renderer: &mut Renderer,
-        vram: &Vram,
-        atlas: &Atlas,
-        art: &Art,
-        track: &Track,
-        camera: &Camera,
-        window: (usize, usize),
-        lighting: Lighting,
-    ) {
-        let (start, end) = window;
-        let tint = fog_tint_from(atlas.average(vram, &art.treeline[0]), lighting.fog);
-        let right = (camera.yaw.cos(), -camera.yaw.sin());
-        let lit = |shade: f32, x: f32, z: f32| {
-            let base = [0, 1, 2].map(|c| {
-                let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * 0.6) / 255.0;
-                (128.0 * light * shade).clamp(0.0, 255.0) as u8
-            });
-            lighting.lit_by_beam(base, x, z)
-        };
-        let jungle = |index: usize| {
-            let (a, b, t) = track.biomes.at(Track::distance(index));
-            let weight = |biome: usize| {
-                if BIOMES[biome].ground == Ground::Jungle {
-                    1.0
-                } else {
-                    0.0
-                }
-            };
-            weight(a) * (1.0 - t) + weight(b) * t
-        };
-        for index in start..end {
-            if track.is_structure(index) || track.is_structure(index + 1) {
-                continue;
-            }
-            let presence = jungle(index).min(jungle(index + 1));
-            if presence <= 0.0 {
-                continue;
-            }
-            for side in [-1.0f32, 1.0] {
-                let key = hash(track.seed ^ 0x7ee5, index as u64, side as i64 as u64);
-                let gap = value_noise(track.seed ^ 0x6a95 ^ side as i64 as u64, index as f32 / 9.0);
-                if hash_float(key, 1, 0) > presence || gap < TREELINE_GAP {
-                    continue;
-                }
-                let blocked = |index: usize| {
-                    let character = track.character(index);
-                    character.cutting > 0.3 || character.ledge * side > 0.3
-                };
-                if blocked(index) || blocked(index + 1) {
-                    continue;
-                }
-                let edge = |index: usize| {
-                    let sample = track.sample(index);
-                    let setback = track.shoulder(index) + TREELINE_SETBACK;
-                    let lateral = side * setback.min(sample.clearance(side) - 1.0);
-                    let (x, z) = sample.offset(lateral);
-                    let ground = self.landscape.height_at(track, x, z) - TREELINE_SINK;
-                    let height = TREELINE_LOW
-                        + (TREELINE_HIGH - TREELINE_LOW)
-                            * value_noise(
-                                track.seed ^ 0x7e11 ^ side as i64 as u64,
-                                index as f32 / 2.3,
-                            );
-                    (x, ground, z, height)
-                };
-                let (a, b) = (edge(index), edge(index + 1));
-                if track.riverbed(a.0, a.2) || track.riverbed(b.0, b.2) {
-                    continue;
-                }
-                let origin = world_to_psx(a.0, a.1, a.2);
-                renderer.set_object(origin, Mat3Fx12::IDENTITY);
-                let local = |x: f32, y: f32, z: f32| {
-                    let position = world_to_psx(x, y, z);
-                    Vec3i16::new(
-                        (position.x - origin.x) as i16,
-                        (position.y - origin.y) as i16,
-                        (position.z - origin.z) as i16,
-                    )
-                };
-                let wall =
-                    tiled(&art.treeline[(hash(key, 5, 0) % art.treeline.len() as u64) as usize]);
-                let u0 = ((index % TREELINE_REPEAT) * TREELINE_TEXELS) as u8;
-                let u1 = u0 + TREELINE_TEXELS as u8 - 1;
-                let v = |_: f32| 63u8;
-                let points = [
-                    Point::new(local(a.0, a.1 + a.3, a.2), lit(1.0, a.0, a.2), (u0, 0)),
-                    Point::new(local(b.0, b.1 + b.3, b.2), lit(1.0, b.0, b.2), (u1, 0)),
-                    Point::new(
-                        local(a.0, a.1, a.2),
-                        lit(TREELINE_FLOOR, a.0, a.2),
-                        (u0, v(a.3)),
-                    ),
-                    Point::new(
-                        local(b.0, b.1, b.2),
-                        lit(TREELINE_FLOOR, b.0, b.2),
-                        (u1, v(b.3)),
-                    ),
-                ];
-                renderer.polygon(&points, Surface::textured(wall.texture).tinted(tint), 0, 1);
-                if hash_float(key, 2, 0) < TREELINE_VINES {
-                    let vine = art.vines[(hash(key, 3, 0) % art.vines.len() as u64) as usize];
-                    let t = hash_float(key, 4, 0);
-                    let (x, z) = (a.0 + (b.0 - a.0) * t, a.2 + (b.2 - a.2) * t);
-                    let top = a.1 + a.3 + (b.1 + b.3 - a.1 - a.3) * t + 0.6;
-                    let (rx, rz) = track.sample(index).right();
-                    let (x, z) = (x - rx * side * 0.4, z - rz * side * 0.4);
-                    let distance = (x - camera.x).hypot(z - camera.z);
-                    let image = band_image(&vine, fog_band(fog_amount(distance)));
-                    let color = lit(1.0, x, z);
-                    self.billboard(
-                        renderer,
-                        &image,
-                        [x, top - VINE_HEIGHT, z],
-                        VINE_HEIGHT * 0.8,
-                        VINE_HEIGHT,
-                        right,
-                        color,
-                        color,
                     );
                 }
             }
@@ -1727,7 +1589,6 @@ impl World {
             Prop::Pine => (pick(&art.pine), 5.5, 11.0, true),
             Prop::SnowFir => (pick(&art.snow_fir), 4.5, 9.0, true),
             Prop::Broadleaf => (pick(&art.broadleaf), 7.0, 14.0, true),
-            Prop::Kapok => (pick(&art.kapok), 9.0, 18.0, true),
             Prop::AutumnTree => (pick(&art.autumn), 7.0, 14.0, true),
             Prop::BareTree => (pick(&art.bare), 7.0, 14.0, true),
             Prop::Joshua => (pick(&art.joshua), 4.0, 8.0, true),

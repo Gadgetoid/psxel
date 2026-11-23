@@ -33,14 +33,13 @@ pub struct Sources<'a> {
     pub roads: &'a [(Road, &'a [u8])],
     pub desert_cliff: &'a [u8],
     pub rock_cliff: &'a [u8],
-    pub jungle_cliff: &'a [u8],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Source {
     Ground(Ground),
     Road(Road),
-    Cliff(Ground),
+    Cliff(bool),
 }
 
 pub struct Blends {
@@ -48,7 +47,6 @@ pub struct Blends {
     roads: Vec<(Road, Decoded)>,
     desert_cliff: Decoded,
     rock_cliff: Decoded,
-    jungle_cliff: Decoded,
     masks: [Vec<f32>; 3],
     slots: [[Image; STAGES]; 3],
     active: [bool; 3],
@@ -72,7 +70,6 @@ impl Blends {
                 .collect(),
             desert_cliff: decode(sources.desert_cliff),
             rock_cliff: decode(sources.rock_cliff),
-            jungle_cliff: decode(sources.jungle_cliff),
             masks,
             slots,
             active: [false; 3],
@@ -90,10 +87,7 @@ impl Blends {
             let source = |biome: &crate::biome::Biome| match kind {
                 Kind::Ground => Source::Ground(biome.ground),
                 Kind::Road => Source::Road(biome.road),
-                Kind::Cliff => Source::Cliff(match biome.ground {
-                    Ground::Earth | Ground::Jungle => biome.ground,
-                    _ => Ground::Grass,
-                }),
+                Kind::Cliff => Source::Cliff(biome.ground == Ground::Earth),
             };
             let (from, to) = (source(first), source(second));
             self.active[slot] = from != to;
@@ -154,9 +148,8 @@ impl Blends {
                 .find(|(entry, _)| *entry == road)
                 .map(|(_, decoded)| decoded)
                 .expect("road blend source"),
-            Source::Cliff(Ground::Earth) => &self.desert_cliff,
-            Source::Cliff(Ground::Jungle) => &self.jungle_cliff,
-            Source::Cliff(_) => &self.rock_cliff,
+            Source::Cliff(true) => &self.desert_cliff,
+            Source::Cliff(false) => &self.rock_cliff,
         }
     }
 
