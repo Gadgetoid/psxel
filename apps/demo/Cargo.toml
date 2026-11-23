@@ -5,4 +5,4 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-psx_engine = { path = "../../crates/psx_engine" }
+psxel_engine = { path = "../../crates/psxel_engine" }

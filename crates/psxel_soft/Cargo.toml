@@ -1,12 +1,12 @@
 [package]
-name = "psx_soft"
+name = "psxel_soft"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-psx_prim = { path = "../psx_prim" }
-psx_vram = { path = "../psx_vram" }
+psxel_prim = { path = "../psxel_prim" }
+psxel_vram = { path = "../psxel_vram" }
 
 [dev-dependencies]
 png = "0.18"

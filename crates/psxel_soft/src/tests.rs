@@ -1,5 +1,5 @@
 use super::*;
-use psx_vram::{Clut, TexPage, TextureDepth};
+use psxel_vram::{Clut, TexPage, TextureDepth};
 
 fn env() -> DrawEnv {
     let mut env = DrawEnv::new(0, 0, 64, 64);
@@ -383,7 +383,7 @@ fn per_primitive_texture_window_repeats_tile() {
     for v in 0..64 {
         vram.write_rect(256, v, 64, &ramp);
     }
-    let window = psx_vram::TextureWindow {
+    let window = psxel_vram::TextureWindow {
         mask_x: 0x18,
         mask_y: 0x18,
         offset_x: 0,

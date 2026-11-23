@@ -1,5 +1,5 @@
-use psx_math::{Gte, Mat3Fx12, Projected, Vec3i16, Vec3i32, FULL_TURN};
-use psx_prim::{exceeds_gpu_limits, BlendMode, OrderingTable, Primitive, Texture, Vertex};
+use psxel_math::{Gte, Mat3Fx12, Projected, Vec3i16, Vec3i32, FULL_TURN};
+use psxel_prim::{exceeds_gpu_limits, BlendMode, OrderingTable, Primitive, Texture, Vertex};
 
 use crate::biome::Rgb;
 

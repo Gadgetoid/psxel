@@ -1,5 +1,5 @@
-use psx_math::{Mat3Fx12, Vec3i16, Vec3i32};
-use psx_prim::Texture;
+use psxel_math::{Mat3Fx12, Vec3i16, Vec3i32};
+use psxel_prim::Texture;
 
 use crate::biome::Rgb;
 use crate::livery::{CarAtlas, BODY_FRONT, BODY_REAR};

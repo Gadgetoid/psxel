@@ -1,4 +1,4 @@
-use psx_vram::{TextureWindow, Vram};
+use psxel_vram::{TextureWindow, Vram};
 
 use crate::blend::{Blends, Sources};
 use crate::sprites::SpriteSheet;

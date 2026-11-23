@@ -1,5 +1,5 @@
-use psx_prim::{exceeds_gpu_limits, BlendMode, Primitive, Texture, Vertex};
-use psx_vram::{TextureWindow, Vram, MASK_BIT, VRAM_HEIGHT, VRAM_WIDTH};
+use psxel_prim::{exceeds_gpu_limits, BlendMode, Primitive, Texture, Vertex};
+use psxel_vram::{TextureWindow, Vram, MASK_BIT, VRAM_HEIGHT, VRAM_WIDTH};
 
 pub const DITHER: [[i32; 4]; 4] = [
     [-4, 0, -3, 1],

@@ -1,5 +1,5 @@
-use psx_prim::Texture;
-use psx_vram::{TexPage, TextureDepth, Vram};
+use psxel_prim::Texture;
+use psxel_vram::{TexPage, TextureDepth, Vram};
 
 use crate::biome::{scale_rgb, Rgb};
 use crate::textures::{car_clut, color, wheel_clut, Canvas, Image};

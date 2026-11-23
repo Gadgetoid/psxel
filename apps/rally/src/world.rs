@@ -1,6 +1,6 @@
-use psx_math::{Mat3Fx12, Vec3i16};
-use psx_prim::{BlendMode, Primitive, Vertex};
-use psx_vram::Vram;
+use psxel_math::{Mat3Fx12, Vec3i16};
+use psxel_prim::{BlendMode, Primitive, Vertex};
+use psxel_vram::Vram;
 
 use crate::art::{tiled, Art, Ground, Road};
 use crate::biome::{lerp_rgb, scale_rgb, Horizon, Prop, Rgb, Weather, BIOMES};

@@ -1,4 +1,4 @@
-use psx_engine::{Audio, SoundId};
+use psxel_engine::{Audio, SoundId};
 
 use crate::biome::Weather;
 use crate::car::Ground;
@@ -128,9 +128,10 @@ impl SoundSystem {
             call: audio.load_wav(asset!("rally_call")),
             splash: audio.load_wav(asset!("rally_splash")),
             music: {
-                let stream =
-                    psx_spu::decode_file(include_bytes!("../../../assets/sounds/rally_music.spu"))
-                        .expect("music stream");
+                let stream = psxel_spu::decode_file(include_bytes!(
+                    "../../../assets/sounds/rally_music.spu"
+                ))
+                .expect("music stream");
                 audio.load_samples(
                     stream.rate,
                     stream

@@ -1,5 +1,5 @@
-use psx_prim::Texture;
-use psx_vram::{bgr555, Clut, TexPage, TextureDepth, Vram, MASK_BIT};
+use psxel_prim::Texture;
+use psxel_vram::{bgr555, Clut, TexPage, TextureDepth, Vram, MASK_BIT};
 
 use crate::font;
 use crate::textures::Image;

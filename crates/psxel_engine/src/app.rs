@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use psx_gpu::{Presenter, DISPLAY_HEIGHT};
+use psxel_gpu::{Presenter, DISPLAY_HEIGHT};
 use web_time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
@@ -98,7 +98,7 @@ impl Input {
     }
 
     pub fn to_frame(&self, position: (f32, f32), frame_width: u32) -> (i32, i32) {
-        let viewport = psx_gpu::letterbox(self.surface.0 as u32, self.surface.1 as u32);
+        let viewport = psxel_gpu::letterbox(self.surface.0 as u32, self.surface.1 as u32);
         let x = (position.0 - viewport.x as f32) * frame_width as f32 / viewport.width as f32;
         let y = (position.1 - viewport.y as f32) * DISPLAY_HEIGHT as f32 / viewport.height as f32;
         (x as i32, y as i32)

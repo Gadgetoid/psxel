@@ -1,4 +1,4 @@
-# psx
+# psxel
 
 A PlayStation-style renderer in Rust, and a procedurally generated rally game built on it.
 
@@ -25,13 +25,13 @@ cd web/rally && trunk build --release  # web build into dist/rally
 
 ## Layout
 
-- `crates/psx_math`: fixed-point maths and the GTE.
-- `crates/psx_prim`: primitives and ordering tables.
-- `crates/psx_vram`: VRAM, texture pages, CLUTs and texture windows.
-- `crates/psx_soft`: the software rasteriser.
-- `crates/psx_gpu`: wgpu presentation.
-- `crates/psx_spu`: SPU-ADPCM encoding and decoding.
-- `crates/psx_engine`: windowing, input, gamepad and Web Audio.
+- `crates/psxel_math`: fixed-point maths and the GTE.
+- `crates/psxel_prim`: primitives and ordering tables.
+- `crates/psxel_vram`: VRAM, texture pages, CLUTs and texture windows.
+- `crates/psxel_soft`: the software rasteriser.
+- `crates/psxel_gpu`: wgpu presentation.
+- `crates/psxel_spu`: SPU-ADPCM encoding and decoding.
+- `crates/psxel_engine`: windowing, input, gamepad and Web Audio.
 - `apps/rally`: the rally game. `apps/demo`: the test card.
 - `assets`: converted sprites, textures and sounds.
 
@@ -39,4 +39,4 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more.
 
 ## Licence
 
-The code is MIT (see [LICENSE](LICENSE)). Everything in `assets/` is CC0 (see [assets/LICENSE](assets/LICENSE)). The assets are produced from source art and synth patches by the separate psx-asset-tools repository; only the converted results live here.
+The code is MIT (see [LICENSE](LICENSE)). Everything in `assets/` is CC0 (see [assets/LICENSE](assets/LICENSE)). The assets are produced from source art and synth patches by the separate psxel-asset-tools repository; only the converted results live here.

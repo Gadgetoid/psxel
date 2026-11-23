@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use psx_math::{Mat3Fx12, Vec3i16};
-use psx_vram::Vram;
+use psxel_math::{Mat3Fx12, Vec3i16};
+use psxel_vram::Vram;
 
 use crate::art::{tiled, Art};
 use crate::biome::{lerp_rgb, Prop, Rgb, BIOMES};
@@ -428,7 +428,7 @@ impl Landscape {
                 let Some((image, width, height)) = prop_sprite(art, atlas, prop, key) else {
                     continue;
                 };
-                let image = if image.texture.page.depth == psx_vram::TextureDepth::Clut8 {
+                let image = if image.texture.page.depth == psxel_vram::TextureDepth::Clut8 {
                     band_image(&image, band)
                 } else {
                     image.in_fog_band(band)

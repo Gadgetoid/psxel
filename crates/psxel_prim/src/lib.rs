@@ -1,4 +1,4 @@
-use psx_vram::{Clut, TexPage, TextureWindow};
+use psxel_vram::{Clut, TexPage, TextureWindow};
 
 pub const MAX_POLYGON_WIDTH: i32 = 1023;
 pub const MAX_POLYGON_HEIGHT: i32 = 511;

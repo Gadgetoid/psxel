@@ -1,6 +1,6 @@
 # Sprite and texture sources
 
-All sprites and textures are CC0 (see `../LICENSE`). They are converted from source art supplied by the project author with [psx-asset-tools](../../../psx-asset-tools) (`sprites/make_sprites.py`). The source art is not shipped.
+All sprites and textures are CC0 (see `../LICENSE`). They are converted from source art supplied by the project author with [psxel-asset-tools](../../../psxel-asset-tools) (`sprites/make_sprites.py`). The source art is not shipped.
 
 Variant `_0` comes from the unsuffixed source file, `_1` from `-2`, `_2` from `-3`, `_3` from `-4`.
 

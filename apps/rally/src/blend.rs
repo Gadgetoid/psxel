@@ -1,4 +1,4 @@
-use psx_vram::{bgr555, Vram};
+use psxel_vram::{bgr555, Vram};
 
 use crate::art::{Ground, Road};
 use crate::biome::BIOMES;

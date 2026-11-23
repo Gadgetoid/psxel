@@ -1,4 +1,4 @@
-use psx_prim::{BlendMode, Primitive, Vertex};
+use psxel_prim::{BlendMode, Primitive, Vertex};
 
 use crate::biome::Rgb;
 use crate::font::{self, cell, COLUMNS, GLYPH_SIZE};

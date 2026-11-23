@@ -1,5 +1,5 @@
-use psx_prim::Texture;
-use psx_vram::{bgr555, Clut, TexPage, TextureDepth, Vram};
+use psxel_prim::Texture;
+use psxel_vram::{bgr555, Clut, TexPage, TextureDepth, Vram};
 
 use crate::biome::Rgb;
 use crate::textures::{Image, FOG_BANDS};

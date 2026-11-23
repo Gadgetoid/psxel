@@ -1,4 +1,4 @@
-use psx_engine::{Framebuffer, Game, Input};
+use psxel_engine::{Framebuffer, Game, Input};
 
 fn bgr555(red: u16, green: u16, blue: u16) -> u16 {
     (blue << 10) | (green << 5) | red
@@ -46,5 +46,5 @@ impl Game for Demo {
 }
 
 fn main() {
-    psx_engine::run("psx demo", Demo::default());
+    psxel_engine::run("psxel demo", Demo::default());
 }

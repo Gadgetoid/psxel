@@ -17,9 +17,9 @@ mod textures;
 mod track;
 mod world;
 
-use psx_engine::{Framebuffer, Game, Input, Key};
-use psx_soft::{draw_all, fill_rect, DrawEnv};
-use psx_vram::Vram;
+use psxel_engine::{Framebuffer, Game, Input, Key};
+use psxel_soft::{draw_all, fill_rect, DrawEnv};
+use psxel_vram::Vram;
 
 use biome::{scale_rgb, Weather, BIOMES};
 use car::{Car, CarMesh, Controls, Ground, DT};
@@ -330,7 +330,7 @@ impl Rally {
             ));
         }
         if let Some(pad) = input.gamepad {
-            use psx_engine::Gamepad as Pad;
+            use psxel_engine::Gamepad as Pad;
             let stick = pad.stick(0, 0.12);
             let pad_steer = stick.signum() * stick.abs().powf(1.5) + pad.value(Pad::RIGHT)
                 - pad.value(Pad::LEFT);
@@ -823,7 +823,7 @@ impl Rally {
 }
 
 impl Game for Rally {
-    fn audio(&mut self, audio: &mut psx_engine::Audio) {
+    fn audio(&mut self, audio: &mut psxel_engine::Audio) {
         let distance = self.car.distance();
         let (a, b, t) = self.track.biomes.at(distance);
         let biome = if t < 0.5 { &BIOMES[a] } else { &BIOMES[b] };
@@ -865,7 +865,7 @@ impl Game for Rally {
             self.state = State::Title;
             return;
         }
-        if input.just_pressed(Key::F5) || input.pad_pressed(psx_engine::Gamepad::SELECT) {
+        if input.just_pressed(Key::F5) || input.pad_pressed(psxel_engine::Gamepad::SELECT) {
             self.hide_hud = !self.hide_hud;
         }
         if input.just_pressed(Key::KeyM) {
@@ -901,8 +901,8 @@ impl Game for Rally {
         self.read_controls(input);
         let confirm = input.just_pressed(Key::Enter)
             || input.tapped
-            || input.pad_pressed(psx_engine::Gamepad::START)
-            || input.pad_pressed(psx_engine::Gamepad::A);
+            || input.pad_pressed(psxel_engine::Gamepad::START)
+            || input.pad_pressed(psxel_engine::Gamepad::A);
         match self.state {
             State::Title => {
                 self.controls = self.autopilot_controls();
@@ -911,22 +911,22 @@ impl Game for Rally {
                 let vertical = input.gamepad.map(|pad| pad.stick(1, 0.5)).unwrap_or(0.0);
                 let up = input.just_pressed(Key::ArrowUp)
                     || input.just_pressed(Key::KeyW)
-                    || input.pad_pressed(psx_engine::Gamepad::UP)
+                    || input.pad_pressed(psxel_engine::Gamepad::UP)
                     || (vertical < 0.0 && !self.menu_latch);
                 let down = input.just_pressed(Key::ArrowDown)
                     || input.just_pressed(Key::KeyS)
-                    || input.pad_pressed(psx_engine::Gamepad::DOWN)
+                    || input.pad_pressed(psxel_engine::Gamepad::DOWN)
                     || (vertical > 0.0 && !self.menu_latch);
                 let horizontal = input.gamepad.map(|pad| pad.stick(0, 0.5)).unwrap_or(0.0);
                 let mut cycle = 0i32;
                 if input.just_pressed(Key::ArrowLeft)
-                    || input.pad_pressed(psx_engine::Gamepad::LEFT)
+                    || input.pad_pressed(psxel_engine::Gamepad::LEFT)
                     || (horizontal < 0.0 && !self.menu_latch)
                 {
                     cycle = -1;
                 }
                 if input.just_pressed(Key::ArrowRight)
-                    || input.pad_pressed(psx_engine::Gamepad::RIGHT)
+                    || input.pad_pressed(psxel_engine::Gamepad::RIGHT)
                     || (horizontal > 0.0 && !self.menu_latch)
                 {
                     cycle = 1;
@@ -987,7 +987,7 @@ impl Game for Rally {
                         x > SCREEN_WIDTH - 90 && y < 44
                     });
                 if input.just_pressed(Key::KeyR)
-                    || input.pad_pressed(psx_engine::Gamepad::Y)
+                    || input.pad_pressed(psxel_engine::Gamepad::Y)
                     || tapped_reset
                 {
                     self.car.reset_to_track(&self.track);
@@ -1153,7 +1153,7 @@ impl Game for Rally {
             buffer_y as usize,
             SCREEN_WIDTH as usize,
             SCREEN_HEIGHT as usize,
-            psx_vram::bgr555(fog[0], fog[1], fog[2]),
+            psxel_vram::bgr555(fog[0], fog[1], fog[2]),
         );
         draw_all(&mut self.vram, &env, self.renderer.ot.draw_order());
         draw_all(&mut self.vram, &env, &self.renderer.overlay);
@@ -1161,7 +1161,7 @@ impl Game for Rally {
         self.render_ms = self.render_ms * 0.9 + started.elapsed().as_secs_f32() * 100.0;
         let width = framebuffer.width.min(SCREEN_WIDTH as usize);
         for row in 0..framebuffer.height {
-            let source = (buffer_y as usize + row) * psx_vram::VRAM_WIDTH;
+            let source = (buffer_y as usize + row) * psxel_vram::VRAM_WIDTH;
             framebuffer.pixels[row * framebuffer.width..row * framebuffer.width + width]
                 .copy_from_slice(&self.vram.pixels[source..source + width]);
         }
@@ -1177,7 +1177,7 @@ fn draw_lamps(
     strength: f32,
     braking: bool,
 ) {
-    use psx_math::{Mat3Fx12, Vec3i16};
+    use psxel_math::{Mat3Fx12, Vec3i16};
     use render::{units, world_to_psx, Point, Surface};
     let puff = atlas.puff;
     let (fx, fz) = car.forward();
@@ -1213,7 +1213,7 @@ fn draw_lamps(
         ];
         renderer.polygon(
             &points,
-            Surface::textured(puff.texture).blended(psx_prim::BlendMode::Add),
+            Surface::textured(puff.texture).blended(psxel_prim::BlendMode::Add),
             bias,
             0,
         );
@@ -1252,7 +1252,7 @@ fn render_scale(color: [u8; 3], amount: f32) -> [u8; 3] {
 }
 
 fn draw_shadow(renderer: &mut Renderer, car: &Car, world: &World, track: &Track, color: [u8; 3]) {
-    use psx_math::{Mat3Fx12, Vec3i16};
+    use psxel_math::{Mat3Fx12, Vec3i16};
     use render::{world_to_psx, Point, Surface};
     let (fx, fz) = car.forward();
     let (rx, rz) = car.right();
@@ -1298,7 +1298,7 @@ fn draw_shadow(renderer: &mut Renderer, car: &Car, world: &World, track: &Track,
     renderer.fog_enabled = false;
     renderer.polygon(
         &points,
-        Surface::flat().blended(psx_prim::BlendMode::Subtract),
+        Surface::flat().blended(psxel_prim::BlendMode::Subtract),
         -360,
         1,
     );
@@ -1306,7 +1306,7 @@ fn draw_shadow(renderer: &mut Renderer, car: &Car, world: &World, track: &Track,
 }
 
 fn main() {
-    psx_engine::run(
+    psxel_engine::run(
         "PSX Rally",
         Rally::new(requested_seed().unwrap_or_else(new_seed)),
     );

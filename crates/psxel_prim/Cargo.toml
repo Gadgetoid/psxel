@@ -1,7 +1,8 @@
 [package]
-name = "psx_assets"
+name = "psxel_prim"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+psxel_vram = { path = "../psxel_vram" }

@@ -1,11 +1,11 @@
 [package]
-name = "psx_engine"
+name = "psxel_engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-psx_gpu = { path = "../psx_gpu" }
+psxel_gpu = { path = "../psxel_gpu" }
 wgpu.workspace = true
 winit.workspace = true
 log.workspace = true

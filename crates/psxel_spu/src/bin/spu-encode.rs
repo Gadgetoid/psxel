@@ -38,7 +38,7 @@ fn main() {
         std::process::exit(2);
     }
     let (rate, samples) = read_wav(&std::fs::read(&arguments[1]).expect("read input"));
-    let encoded = psx_spu::encode_file(rate, &samples, true);
+    let encoded = psxel_spu::encode_file(rate, &samples, true);
     std::fs::write(&arguments[2], &encoded).expect("write output");
     println!(
         "{} samples at {} Hz -> {} bytes",

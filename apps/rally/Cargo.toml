@@ -5,12 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-psx_engine = { path = "../../crates/psx_engine" }
-psx_math = { path = "../../crates/psx_math" }
-psx_prim = { path = "../../crates/psx_prim" }
-psx_soft = { path = "../../crates/psx_soft" }
-psx_vram = { path = "../../crates/psx_vram" }
-psx_spu = { path = "../../crates/psx_spu" }
+psxel_engine = { path = "../../crates/psxel_engine" }
+psxel_math = { path = "../../crates/psxel_math" }
+psxel_prim = { path = "../../crates/psxel_prim" }
+psxel_soft = { path = "../../crates/psxel_soft" }
+psxel_vram = { path = "../../crates/psxel_vram" }
+psxel_spu = { path = "../../crates/psxel_spu" }
 web-time = "1"
 png = "0.18"
 

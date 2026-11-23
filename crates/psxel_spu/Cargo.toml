@@ -1,5 +1,5 @@
 [package]
-name = "psx_vram"
+name = "psxel_spu"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
