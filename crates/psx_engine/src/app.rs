@@ -13,6 +13,8 @@ pub use winit::keyboard::KeyCode as Key;
 
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 const MAX_TICKS_PER_FRAME: u32 = 5;
+#[cfg(target_arch = "wasm32")]
+const MAX_PIXEL_RATIO: f64 = 2.0;
 
 pub struct Framebuffer {
     pub width: usize,
@@ -284,14 +286,20 @@ impl<G: Game> App<G> {
         let ratio = web_sys::window()
             .map(|window| window.device_pixel_ratio())
             .unwrap_or(1.0);
-        let width = (canvas.client_width() as f64 * ratio).round().max(1.0) as u32;
-        let height = (canvas.client_height() as f64 * ratio).round().max(1.0) as u32;
+        let backing = ratio.min(MAX_PIXEL_RATIO);
+        let (client_width, client_height) =
+            (canvas.client_width() as f64, canvas.client_height() as f64);
+        let width = (client_width * backing).round().max(1.0) as u32;
+        let height = (client_height * backing).round().max(1.0) as u32;
         if width != gpu.config.width || height != gpu.config.height {
             canvas.set_width(width);
             canvas.set_height(height);
             gpu.resize(width, height);
         }
-        self.input.surface = (width as f32, height as f32);
+        self.input.surface = (
+            (client_width * ratio) as f32,
+            (client_height * ratio) as f32,
+        );
     }
 }
 

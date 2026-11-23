@@ -79,6 +79,9 @@ mod backend {
         }
 
         pub fn resume(&self) {
+            if self.context.state() == web_sys::AudioContextState::Running {
+                return;
+            }
             let _ = self.context.resume();
         }
 

@@ -97,6 +97,8 @@ struct Rally {
     drag: Option<((i32, i32), (i32, i32))>,
     frame: u32,
     show_stats: bool,
+    frame_ms: f32,
+    last_render: Option<web_time::Instant>,
     autopilot: bool,
     mode: Mode,
     clock: f32,
@@ -111,20 +113,26 @@ struct Rally {
     seed: u64,
 }
 
-fn requested_seed() -> Option<u64> {
+fn url_parameter(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
         let search = web_sys::window()?.location().search().ok()?;
-        let value = search
-            .trim_start_matches('?')
-            .split('&')
-            .find_map(|pair| pair.strip_prefix("seed="))?;
-        value.parse().ok()
+        search.trim_start_matches('?').split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (key == name).then(|| value.to_string())
+        })
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::env::args().nth(1)?.parse().ok()
+        match name {
+            "seed" => std::env::args().nth(1),
+            _ => None,
+        }
     }
+}
+
+fn requested_seed() -> Option<u64> {
+    url_parameter("seed")?.parse().ok()
 }
 
 fn new_seed() -> u64 {
@@ -180,7 +188,9 @@ impl Rally {
             controls: Controls::default(),
             drag: None,
             frame: 0,
-            show_stats: false,
+            show_stats: url_parameter("stats").is_some(),
+            frame_ms: 16.7,
+            last_render: None,
             autopilot: false,
             mode: Mode::RaceTheClock,
             clock: 0.12,
@@ -754,7 +764,8 @@ impl Rally {
         }
         if self.show_stats {
             let text = format!(
-                "{:3.1}MS T{:.2} I{} D{:.0} V{:.0}",
+                "{:2.0}FPS {:3.1}MS T{:.2} I{} D{:.0} V{:.0}",
+                1000.0 / self.frame_ms.max(1.0),
                 self.render_ms,
                 self.clock,
                 self.car.index,
@@ -974,6 +985,11 @@ impl Game for Rally {
 
     fn render(&mut self, framebuffer: &mut Framebuffer) {
         let started = web_time::Instant::now();
+        if let Some(last) = self.last_render {
+            let interval = (started - last).as_secs_f32() * 1000.0;
+            self.frame_ms = self.frame_ms * 0.9 + interval * 0.1;
+        }
+        self.last_render = Some(started);
         let distance = self.car.distance();
         let section = self.track.biomes.section(distance);
         let into = distance - section as f32 * biome::SECTION_LENGTH;
