@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use psxel_math::{Mat3Fx12, Vec3i16};
@@ -22,8 +22,16 @@ const NEAR_RADIUS: f32 = 112.0;
 const FAR_RADIUS: f32 = 256.0;
 const PROP_RADIUS: f32 = 210.0;
 const GROUND_BIAS: i32 = 200;
-const UNDER_ROAD: f32 = 0.6;
-const CACHE_LIMIT: usize = 60_000;
+const UNDER_ROAD: f32 = 0.15;
+const SLOT_DEPTH: f32 = 0.3;
+const CACHE_LIMIT: usize = 120_000;
+const DETAIL: i32 = 4;
+const FINE: f32 = LATTICE / DETAIL as f32;
+const DETAIL_RADIUS: f32 = 72.0;
+const DETAIL_ERROR: f32 = 0.3;
+const DETAIL_REACH: f32 = 24.0;
+const STEEP: f32 = 0.75;
+const DETAIL_BUDGET: usize = 24;
 
 #[derive(Clone, Copy)]
 struct Vertex {
@@ -36,6 +44,9 @@ struct Vertex {
 #[derive(Default)]
 pub struct Landscape {
     cache: RefCell<HashMap<(i32, i32), Vertex>>,
+    detail: RefCell<HashMap<(i32, i32), i32>>,
+    focus: Cell<(f32, f32)>,
+    budget: Cell<usize>,
     generated: RefCell<usize>,
 }
 
@@ -67,12 +78,16 @@ impl View {
 }
 
 impl Landscape {
-    fn vertex(&self, track: &Track, gx: i32, gz: i32) -> Vertex {
-        if let Some(vertex) = self.cache.borrow().get(&(gx, gz)) {
+    fn coarse(&self, track: &Track, gx: i32, gz: i32) -> Vertex {
+        self.vertex(track, gx * DETAIL, gz * DETAIL)
+    }
+
+    fn vertex(&self, track: &Track, fx: i32, fz: i32) -> Vertex {
+        if let Some(vertex) = self.cache.borrow().get(&(fx, fz)) {
             return *vertex;
         }
-        let (x, z) = (gx as f32 * LATTICE, gz as f32 * LATTICE);
-        let terrain = track.terrain(x, z);
+        let (x, z) = (fx as f32 * FINE, fz as f32 * FINE);
+        let terrain = track.drawn_terrain(x, z);
         let (road_index, road_distance) = terrain
             .road
             .map(|road| (road.index as u32, road.distance))
@@ -85,18 +100,123 @@ impl Landscape {
                     UNDER_ROAD * (1.0 - (road.distance - half).max(0.0) / LATTICE).clamp(0.0, 1.0);
             }
         }
+        let slot = track.tunnel_slot(x, z);
+        if let Some(road) = terrain.road.filter(|_| slot) {
+            height = height.min(track.ground(road.index, road.t, 0.0) - SLOT_DEPTH);
+        }
         let vertex = Vertex {
             height,
             road_index,
             road_distance,
-            slot: track.tunnel_slot(x, z),
+            slot,
         };
         let mut cache = self.cache.borrow_mut();
         if cache.len() > CACHE_LIMIT {
             cache.clear();
+            self.detail.borrow_mut().clear();
         }
-        cache.insert((gx, gz), vertex);
+        cache.insert((fx, fz), vertex);
         vertex
+    }
+
+    fn detail(&self, track: &Track, gx: i32, gz: i32) -> i32 {
+        if let Some(&detail) = self.detail.borrow().get(&(gx, gz)) {
+            return detail;
+        }
+        let (fx, fz) = self.focus.get();
+        let centre = ((gx as f32 + 0.5) * LATTICE, (gz as f32 + 0.5) * LATTICE);
+        if (centre.0 - fx).hypot(centre.1 - fz) > DETAIL_RADIUS + LATTICE {
+            return 1;
+        }
+        let at_portal = [(0, 0), (1, 0), (0, 1), (1, 1)]
+            .iter()
+            .any(|&(dx, dz)| self.coarse(track, gx + dx, gz + dz).slot);
+        if !at_portal {
+            if self.budget.get() == 0 {
+                return 1;
+            }
+            self.budget.set(self.budget.get() - 1);
+        }
+        let detail = self.measure_detail(track, gx, gz);
+        self.detail.borrow_mut().insert((gx, gz), detail);
+        detail
+    }
+
+    fn measure_detail(&self, track: &Track, gx: i32, gz: i32) -> i32 {
+        let near_road = [(0, 0), (1, 0), (0, 1), (1, 1)]
+            .iter()
+            .any(|&(dx, dz)| self.coarse(track, gx + dx, gz + dz).road_distance < DETAIL_REACH);
+        let centre = ((gx as f32 + 0.5) * LATTICE, (gz as f32 + 0.5) * LATTICE);
+        if !near_road && !track.tunnel_hill(centre.0, centre.1) {
+            return 1;
+        }
+        let fine = |i: i32, j: i32| self.vertex(track, gx * DETAIL + i, gz * DETAIL + j).height;
+        let error = |cells: i32| {
+            let step = DETAIL / cells;
+            let mut worst = 0.0f32;
+            for j in 0..=DETAIL {
+                for i in 0..=DETAIL {
+                    let (ci, cj) = ((i / step).min(cells - 1), (j / step).min(cells - 1));
+                    let tx = (i - ci * step) as f32 / step as f32;
+                    let tz = (j - cj * step) as f32 / step as f32;
+                    let corner = |a: i32, b: i32| fine((ci + a) * step, (cj + b) * step);
+                    let top = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * tx;
+                    let bottom = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * tx;
+                    worst = worst.max((fine(i, j) - (top + (bottom - top) * tz)).abs());
+                }
+            }
+            worst
+        };
+        if error(1) <= DETAIL_ERROR {
+            1
+        } else if error(2) <= DETAIL_ERROR {
+            2
+        } else {
+            DETAIL
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stitched(
+        &self,
+        track: &Track,
+        gx: i32,
+        gz: i32,
+        cells: i32,
+        neighbours: [i32; 4],
+        i: i32,
+        j: i32,
+    ) -> f32 {
+        let step = DETAIL / cells;
+        let (fi, fj) = (i * step, j * step);
+        let fine = |a: i32, b: i32| self.vertex(track, gx * DETAIL + a, gz * DETAIL + b).height;
+        let along = |across_x: bool, fixed: i32, moving: i32, coarser: i32| {
+            let span = DETAIL / coarser;
+            let first = moving / span * span;
+            if first == moving {
+                return None;
+            }
+            let t = (moving - first) as f32 / span as f32;
+            let (a, b) = if across_x {
+                (fine(fixed, first), fine(fixed, first + span))
+            } else {
+                (fine(first, fixed), fine(first + span, fixed))
+            };
+            Some(a + (b - a) * t)
+        };
+        let [left, right, down, up] = neighbours;
+        let snapped = [
+            (fi == 0 && left < cells).then(|| along(true, 0, fj, left)),
+            (fi == DETAIL && right < cells).then(|| along(true, DETAIL, fj, right)),
+            (fj == 0 && down < cells).then(|| along(false, 0, fi, down)),
+            (fj == DETAIL && up < cells).then(|| along(false, DETAIL, fi, up)),
+        ];
+        snapped
+            .into_iter()
+            .flatten()
+            .flatten()
+            .next()
+            .unwrap_or_else(|| fine(fi, fj))
     }
 
     fn refresh(&self, track: &Track) {
@@ -106,22 +226,51 @@ impl Landscape {
             return;
         }
         *self.generated.borrow_mut() = track.dirty.len();
-        self.cache.borrow_mut().retain(|&(gx, gz), _| {
-            let (x, z) = (gx as f32 * LATTICE, gz as f32 * LATTICE);
-            !regions.iter().any(|&(min_x, min_z, max_x, max_z)| {
-                x >= min_x && x <= max_x && z >= min_z && z <= max_z
+        let inside = |x: f32, z: f32| {
+            regions.iter().any(|&(min_x, min_z, max_x, max_z)| {
+                x >= min_x - LATTICE
+                    && x <= max_x + LATTICE
+                    && z >= min_z - LATTICE
+                    && z <= max_z + LATTICE
             })
-        });
+        };
+        self.cache
+            .borrow_mut()
+            .retain(|&(fx, fz), _| !inside(fx as f32 * FINE, fz as f32 * FINE));
+        self.detail
+            .borrow_mut()
+            .retain(|&(gx, gz), _| !inside(gx as f32 * LATTICE, gz as f32 * LATTICE));
     }
 
     pub fn height_at(&self, track: &Track, x: f32, z: f32) -> f32 {
         let (fx, fz) = (x / LATTICE, z / LATTICE);
         let (gx, gz) = (fx.floor() as i32, fz.floor() as i32);
-        let (tx, tz) = (fx - gx as f32, fz - gz as f32);
-        let h = |dx: i32, dz: i32| self.vertex(track, gx + dx, gz + dz).height;
+        let cells = self.detail(track, gx, gz);
+        let neighbours = if cells > 1 {
+            [(-1, 0), (1, 0), (0, -1), (0, 1)].map(|(dx, dz)| self.detail(track, gx + dx, gz + dz))
+        } else {
+            [1; 4]
+        };
+        let (fx, fz) = (
+            (fx - gx as f32) * cells as f32,
+            (fz - gz as f32) * cells as f32,
+        );
+        let (ci, cj) = (
+            (fx.floor() as i32).clamp(0, cells - 1),
+            (fz.floor() as i32).clamp(0, cells - 1),
+        );
+        let (tx, tz) = (fx - ci as f32, fz - cj as f32);
+        let h =
+            |dx: i32, dz: i32| self.stitched(track, gx, gz, cells, neighbours, ci + dx, cj + dz);
         let top = h(0, 0) + (h(1, 0) - h(0, 0)) * tx;
         let bottom = h(0, 1) + (h(1, 1) - h(0, 1)) * tx;
         top + (bottom - top) * tz
+    }
+
+    pub fn slope_at(&self, track: &Track, x: f32, z: f32) -> f32 {
+        let dx = self.height_at(track, x + 1.0, z) - self.height_at(track, x - 1.0, z);
+        let dz = self.height_at(track, x, z + 1.0) - self.height_at(track, x, z - 1.0);
+        dx.hypot(dz) * 0.5
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -136,6 +285,8 @@ impl Landscape {
         lighting: Lighting,
     ) {
         self.refresh(track);
+        self.focus.set((camera.x, camera.z));
+        self.budget.set(DETAIL_BUDGET);
         let view = View::new(camera);
         let mut averages: Vec<(TextureKey, Rgb)> = Vec::new();
         let mut average_of = |image: &Image| -> Rgb {
@@ -175,7 +326,7 @@ impl Landscape {
                         && [(0, 0), (step, 0), (0, step), (step, step)]
                             .iter()
                             .any(|&(dx, dz)| {
-                                self.vertex(track, gx + dx, gz + dz).road_distance < size + 8.0
+                                self.coarse(track, gx + dx, gz + dz).road_distance < size + 8.0
                             });
                     if near_road {
                         for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
@@ -187,29 +338,60 @@ impl Landscape {
                 }
             }
         }
-        {
-            for &(gx, gz, step, centre_distance) in &cells {
-                {
-                    let size = LATTICE * step as f32;
-                    let (ix, iz) = (gx / step, gz / step);
-                    let (x0, z0) = (gx as f32 * LATTICE, gz as f32 * LATTICE);
-                    let corners = [(0, 0), (step, 0), (0, step), (step, step)]
-                        .map(|(dx, dz)| self.vertex(track, gx + dx, gz + dz));
-                    if corners.iter().any(|vertex| vertex.slot) {
+        let drawn: HashMap<(i32, i32), i32> = cells
+            .iter()
+            .filter(|&&(_, _, step, centre_distance)| step == 1 && centre_distance < DETAIL_RADIUS)
+            .map(|&(gx, gz, _, _)| ((gx, gz), self.detail(track, gx, gz)))
+            .collect();
+        let drawn_detail = |gx: i32, gz: i32| drawn.get(&(gx, gz)).copied().unwrap_or(1);
+        for &(gx, gz, step, centre_distance) in &cells {
+            let size = LATTICE * step as f32;
+            let (ix, iz) = (gx / step, gz / step);
+            let (x0, z0) = (gx as f32 * LATTICE, gz as f32 * LATTICE);
+            let corners = [(0, 0), (step, 0), (0, step), (step, step)]
+                .map(|(dx, dz)| self.coarse(track, gx + dx, gz + dz));
+            let road_index = corners
+                .iter()
+                .map(|vertex| vertex.road_index)
+                .find(|&index| index != u32::MAX)
+                .unwrap_or(0) as usize;
+            let distance = Track::distance(road_index);
+            let (a, b, t) = track.biomes.at(distance);
+            let textured = centre_distance < NEAR_RADIUS;
+            let key = hash_float(track.seed ^ 0xb1e7, ix as u64, iz as u64);
+            let cells_across = if step == 1 { drawn_detail(gx, gz) } else { 1 };
+            let neighbours =
+                [(-1, 0), (1, 0), (0, -1), (0, 1)].map(|(dx, dz)| drawn_detail(gx + dx, gz + dz));
+            let sub = size / cells_across as f32;
+            for j in 0..cells_across {
+                for i in 0..cells_across {
+                    let heights = if cells_across == 1 {
+                        corners.map(|vertex| vertex.height)
+                    } else {
+                        [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(di, dj)| {
+                            self.stitched(track, gx, gz, cells_across, neighbours, i + di, j + dj)
+                        })
+                    };
+                    let buried = if cells_across == 1 {
+                        corners.iter().any(|vertex| vertex.slot)
+                    } else {
+                        let step = DETAIL / cells_across;
+                        [(0, 0), (1, 0), (0, 1), (1, 1)].iter().all(|&(di, dj)| {
+                            self.vertex(
+                                track,
+                                gx * DETAIL + (i + di) * step,
+                                gz * DETAIL + (j + dj) * step,
+                            )
+                            .slot
+                        })
+                    };
+                    if buried {
                         continue;
                     }
-                    let heights = corners.map(|vertex| vertex.height);
+                    let (qx, qz) = (x0 + i as f32 * sub, z0 + j as f32 * sub);
                     let low = heights.iter().copied().fold(f32::MAX, f32::min);
                     let high = heights.iter().copied().fold(f32::MIN, f32::max);
-                    let road_index = corners
-                        .iter()
-                        .map(|vertex| vertex.road_index)
-                        .find(|&index| index != u32::MAX)
-                        .unwrap_or(0) as usize;
-                    let distance = Track::distance(road_index);
-                    let (a, b, t) = track.biomes.at(distance);
-                    let textured = centre_distance < NEAR_RADIUS;
-                    let steep = (high - low) / size > 0.75;
+                    let steep = (high - low) / sub > STEEP;
                     let image_of = |biome: &crate::biome::Biome| {
                         if steep {
                             (
@@ -227,9 +409,8 @@ impl Landscape {
                     let average_a = average_of(&image_a);
                     let average_b = average_of(&image_b);
                     let target = lerp_rgb(average_a, average_b, t);
-                    let key = hash_float(track.seed ^ 0xb1e7, ix as u64, iz as u64);
                     let kind = if steep { Kind::Cliff } else { Kind::Ground };
-                    let riverbed = !steep && track.riverbed(x0 + size * 0.5, z0 + size * 0.5);
+                    let riverbed = !steep && track.riverbed(qx + sub * 0.5, qz + sub * 0.5);
                     let (image, windowed, average) = match art.blends.choose(kind, (a, b), t, key) {
                         Choice::First => (image_a, windowed_a, average_a),
                         Choice::Second => (image_b, windowed_b, average_b),
@@ -245,9 +426,9 @@ impl Landscape {
                         (image, windowed, average)
                     };
                     let slope_x =
-                        ((heights[1] + heights[3]) - (heights[0] + heights[2])) * 0.5 / size;
+                        ((heights[1] + heights[3]) - (heights[0] + heights[2])) * 0.5 / sub;
                     let slope_z =
-                        ((heights[2] + heights[3]) - (heights[0] + heights[1])) * 0.5 / size;
+                        ((heights[2] + heights[3]) - (heights[0] + heights[1])) * 0.5 / sub;
                     let length = (slope_x * slope_x + slope_z * slope_z + 1.0).sqrt();
                     let facing = (-slope_x * sun[0] + sun[1] - slope_z * sun[2]) / length;
                     let shade = (0.45 + facing.max(0.0) * 0.75).clamp(0.3, 1.15);
@@ -264,40 +445,50 @@ impl Landscape {
                     } else {
                         [0, 1, 2].map(|c| ((target[c] as u32 * lit[c] as u32) / 128).min(255) as u8)
                     };
-                    let origin = world_to_psx(x0, low, z0);
+                    let origin = world_to_psx(qx, low, qz);
                     renderer.set_object(origin, Mat3Fx12::IDENTITY);
-                    let span = (size * 8.0).min(255.0) as u8;
-                    let (u0, u1, v0, v1) = if windowed {
-                        (0u8, span.saturating_sub(1), 0u8, span.saturating_sub(1))
+                    let (u_base, u_span, v_base, v_span) = if windowed {
+                        (
+                            0u32,
+                            (size * 8.0).min(256.0) as u32,
+                            0u32,
+                            (size * 8.0).min(256.0) as u32,
+                        )
                     } else {
                         (
-                            image.u,
-                            image.u.wrapping_add(image.width).wrapping_sub(1),
-                            image.v,
-                            image.v.wrapping_add(image.height).wrapping_sub(1),
+                            image.u as u32,
+                            image.width as u32,
+                            image.v as u32,
+                            image.height as u32,
                         )
                     };
+                    let across = cells_across as u32;
+                    let (i, j) = (i as u32, j as u32);
+                    let u0 = (u_base + u_span * i / across) as u8;
+                    let u1 = (u_base + u_span * (i + 1) / across - 1) as u8;
+                    let v0 = (v_base + v_span * (across - j - 1) / across) as u8;
+                    let v1 = (v_base + v_span * (across - j) / across - 1) as u8;
                     let corner = |index: usize, dx: f32, dz: f32, u: u8, v: u8| {
                         let local = Vec3i16::new(
                             units(dx) as i16,
                             -units(heights[index] - low) as i16,
                             units(dz) as i16,
                         );
-                        Point::new(local, lighting.lit_by_beam(color, x0 + dx, z0 + dz), (u, v))
+                        Point::new(local, lighting.lit_by_beam(color, qx + dx, qz + dz), (u, v))
                     };
                     let points = if heights[0] + heights[3] <= heights[1] + heights[2] {
                         [
-                            corner(2, 0.0, size, u0, v0),
-                            corner(3, size, size, u1, v0),
+                            corner(2, 0.0, sub, u0, v0),
+                            corner(3, sub, sub, u1, v0),
                             corner(0, 0.0, 0.0, u0, v1),
-                            corner(1, size, 0.0, u1, v1),
+                            corner(1, sub, 0.0, u1, v1),
                         ]
                     } else {
                         [
                             corner(0, 0.0, 0.0, u0, v1),
-                            corner(2, 0.0, size, u0, v0),
-                            corner(1, size, 0.0, u1, v1),
-                            corner(3, size, size, u1, v0),
+                            corner(2, 0.0, sub, u0, v0),
+                            corner(1, sub, 0.0, u1, v1),
+                            corner(3, sub, sub, u1, v0),
                         ]
                     };
                     let surface = if textured {
@@ -306,7 +497,9 @@ impl Landscape {
                     } else {
                         Surface::gouraud()
                     };
-                    let subdivide = if centre_distance < 20.0 {
+                    let subdivide = if sub < LATTICE {
+                        u8::from(centre_distance < 20.0 && sub > FINE)
+                    } else if centre_distance < 20.0 {
                         2
                     } else if centre_distance < 48.0 {
                         1
@@ -350,7 +543,7 @@ impl Landscape {
                 if !view.visible(x, z, 6.0, PROP_RADIUS) {
                     continue;
                 }
-                let vertex = self.vertex(track, ix, iz);
+                let vertex = self.coarse(track, ix, iz);
                 if vertex.road_index == u32::MAX || vertex.road_distance < 3.0 * LATTICE {
                     let Some(road) = track.terrain(x, z).road else {
                         continue;
@@ -404,6 +597,9 @@ impl Landscape {
                 {
                     continue;
                 }
+                if self.slope_at(track, x, z) > prop.max_slope() {
+                    continue;
+                }
                 let y = self.height_at(track, x, z);
                 let band = fog_band(fog_amount(distance));
                 let scale = 0.8 + hash_float(key, 5, 0) * 0.5;
@@ -446,6 +642,7 @@ pub fn prop_sprite(art: &Art, atlas: &Atlas, prop: Prop, key: u64) -> Option<(Im
         Prop::Pine => (pick(&art.pine), 5.5, 11.0),
         Prop::SnowFir => (pick(&art.snow_fir), 4.5, 9.0),
         Prop::Broadleaf => (pick(&art.broadleaf), 7.0, 14.0),
+        Prop::Kapok => (pick(&art.kapok), 9.0, 18.0),
         Prop::AutumnTree => (pick(&art.autumn), 7.0, 14.0),
         Prop::BareTree => (pick(&art.bare), 7.0, 14.0),
         Prop::Joshua => (pick(&art.joshua), 4.0, 8.0),

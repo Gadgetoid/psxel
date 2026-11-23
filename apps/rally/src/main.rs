@@ -10,6 +10,7 @@ mod landscape;
 mod livery;
 mod render;
 mod rng;
+mod signs;
 mod sound;
 mod sprites;
 mod storage;
@@ -1177,14 +1178,14 @@ fn draw_lamps(
     strength: f32,
     braking: bool,
 ) {
-    use psxel_math::{Mat3Fx12, Vec3i16};
-    use render::{units, world_to_psx, Point, Surface};
+    use psxel_math::{Mat3Fx12, Vec3i16, Vec3i32};
+    use render::{units, Point, Surface};
     let puff = atlas.puff;
     let (fx, fz) = car.forward();
-    let (rx, rz) = car.right();
     let right = (camera.yaw.cos(), -camera.yaw.sin());
     let view = (camera.yaw.sin(), camera.yaw.cos());
-    let base_y = car.y + 0.08 - car.suspension;
+    let rotation = car.rotation();
+    let origin = car.origin();
     let fog_enabled = renderer.fog_enabled;
     renderer.fog_enabled = false;
     let glow = |renderer: &mut Renderer,
@@ -1198,9 +1199,15 @@ fn draw_lamps(
         if facing > 0.2 {
             return;
         }
-        let x = car.x + fx * forward + rx * side;
-        let z = car.z + fz * forward + rz * side;
-        renderer.set_object(world_to_psx(x, base_y + up, z), Mat3Fx12::IDENTITY);
+        let offset = rotation.apply(Vec3i32::new(units(side), -units(up), units(forward)));
+        renderer.set_object(
+            Vec3i32::new(
+                origin.x + offset.x,
+                origin.y + offset.y,
+                origin.z + offset.z,
+            ),
+            Mat3Fx12::IDENTITY,
+        );
         let half = size * 0.5;
         let (dx, dz) = (units(right.0 * half) as i16, units(right.1 * half) as i16);
         let h = units(half) as i16;

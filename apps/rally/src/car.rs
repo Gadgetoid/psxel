@@ -1630,6 +1630,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ditches_are_rare_and_escapable() {
+        let mut track = Track::new(5);
+        track.ensure(3000);
+        let ditched: Vec<(usize, f32)> = (0..2900)
+            .flat_map(|index| [(index, -1.0f32), (index, 1.0)])
+            .filter(|&(index, side)| track.ditch(index, side) > 0.5)
+            .collect();
+        let share = ditched.len() as f32 / 5800.0;
+        assert!(share > 0.01 && share < 0.12, "{share}");
+        let &(index, side) = ditched
+            .iter()
+            .find(|&&(index, side)| {
+                (index - 5..index + 5).all(|near| track.ditch(near, side) > 0.5)
+            })
+            .unwrap();
+        let sample = track.sample(index);
+        let lateral = side * (track.shoulder(index) + 1.8);
+        let (x, z) = sample.offset(lateral);
+        let mut car = Car::new(&track);
+        car.x = x;
+        car.z = z;
+        car.index = index;
+        car.y = track.terrain(x, z).height;
+        car.heading = sample.heading;
+        let mut furthest = 0.0f32;
+        for tick in 0..240 {
+            let steer = if tick < 90 { side } else { 0.0 };
+            car.update(
+                Controls {
+                    throttle: 1.0,
+                    steer,
+                    handbrake: false,
+                },
+                &mut track,
+            );
+            if let Some(road) = track.terrain(car.x, car.z).road {
+                furthest = furthest.max(road.distance);
+            }
+        }
+        assert!(furthest > track.shoulder(index) + 5.0, "{furthest}");
+    }
+
+    #[test]
     fn can_leave_the_road_and_keep_driving() {
         for seed in 0..6u64 {
             let mut track = Track::new(seed);
@@ -1673,6 +1716,7 @@ mod tests {
         car.heading = sample.heading;
         car.index = start;
         car.velocity = (sample.heading.sin() * 30.0, sample.heading.cos() * 30.0);
+        car.vertical_speed = (track.sample(start + 1).y - sample.y) / crate::track::SAMPLE * 30.0;
         let (mut airborne, mut lift) = (0, 0.0f32);
         for _ in 0..400 {
             let target = track.sample(car.index + 5);

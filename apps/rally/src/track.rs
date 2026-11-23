@@ -157,6 +157,7 @@ struct Bump {
     center: f32,
     height: f32,
     width: f32,
+    flat: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -257,9 +258,10 @@ const TUNNEL_COVER: f32 = 9.0;
 const TUNNEL_SHOULDER: f32 = 14.0;
 const TUNNEL_SPREAD: f32 = 45.0;
 const PORTAL_FACE: f32 = 6.0;
-const SLOT_REACH: f32 = 4.0;
+const PORTAL_SET: f32 = 3.0;
+const PORTAL_RAMP: f32 = 3.0;
+const SLOT_REACH: f32 = 0.5;
 const SLOT_MARGIN: f32 = 1.5;
-const CUTTING_RAMP: f32 = 6.0;
 pub const TUNNEL_ROOF_HALF: f32 = 15.0;
 pub const TUNNEL_COVER_HEIGHT: f32 = TUNNEL_COVER;
 
@@ -273,7 +275,8 @@ const ROAD_REACH: f32 = 130.0;
 const CROSSING_ARC: usize = 40;
 
 const FORD_DEPTH: f32 = 1.2;
-const FORD_WIDTH: f32 = 8.0;
+const FORD_WIDTH: f32 = 7.0;
+const FORD_FLAT: f32 = 5.0;
 const FORD_WATER: f32 = 0.35;
 pub const STREAM_HALF_WIDTH: f32 = 4.5;
 const STREAM_STEP: f32 = 6.0;
@@ -323,6 +326,13 @@ const OVERSHOOT_SOFTNESS: f32 = 1.5;
 const NEAR_ROAD: f32 = 40.0;
 const NEAR_ROAD_CURVE: f32 = 0.12;
 const NEAR_ROAD_RAMP: f32 = 0.7;
+const DITCH_DEPTH: f32 = 0.6;
+const DITCH_OFFSET: f32 = 0.3;
+const DITCH_WIDTH: f32 = 3.0;
+const DITCH_LENGTH: f32 = 60.0;
+const DITCH_THRESHOLD: f32 = 0.8;
+const DITCH_FADE: f32 = 0.08;
+const DITCH_START_INDEX: usize = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoadPoint {
@@ -628,6 +638,7 @@ impl Track {
                 center,
                 height: target - self.elevation(center),
                 width: BRIDGE_RAMP,
+                flat: 0.0,
             });
             let reach = (BRIDGE_RAMP * 2.5 / SAMPLE) as usize;
             for earlier in index.saturating_sub(reach)..index {
@@ -784,7 +795,9 @@ impl Track {
         let ground = self.ground_at(index);
         let chance = match ground {
             crate::art::Ground::Grass | crate::art::Ground::Wheat => WALL_CHANCE,
-            crate::art::Ground::Leaves | crate::art::Ground::Earth => WALL_CHANCE * 0.7,
+            crate::art::Ground::Leaves | crate::art::Ground::Earth | crate::art::Ground::Jungle => {
+                WALL_CHANCE * 0.7
+            }
             crate::art::Ground::Snow => return None,
         };
         let run = (index / WALL_RUN) as u64;
@@ -978,10 +991,10 @@ impl Track {
     pub fn tunnel_hill(&self, x: f32, z: f32) -> bool {
         self.tunnels
             .iter()
-            .any(|tunnel| self.tunnel_cover(tunnel, x, z).is_some())
+            .any(|tunnel| self.tunnel_cover(tunnel, x, z, 0.0).is_some())
     }
 
-    fn tunnel_cover(&self, tunnel: &Tunnel, x: f32, z: f32) -> Option<(f32, f32)> {
+    fn tunnel_cover(&self, tunnel: &Tunnel, x: f32, z: f32, set_back: f32) -> Option<(f32, f32)> {
         let middle = self.samples[(tunnel.start + tunnel.end) / 2];
         let half_length = (tunnel.end - tunnel.start) as f32 * SAMPLE * 0.5;
         let reach = half_length + TUNNEL_SHOULDER + TUNNEL_SPREAD + 20.0;
@@ -995,23 +1008,16 @@ impl Track {
             .min_by(|a, b| a.distance.total_cmp(&b.distance))?;
         let position = Self::distance(point.index) + point.t * SAMPLE;
         let (first, last) = (Self::distance(tunnel.start), Self::distance(tunnel.end - 1));
-        let beyond = (first - position).max(position - last);
-        let outside = if beyond > 0.0 {
-            beyond + point.overshoot
-        } else {
-            0.0
-        };
-        let cut = if outside > 0.0 {
-            let edge = self.half_width(point.index) + SLOT_MARGIN;
-            let ramp = ((point.lateral.abs() - edge) / CUTTING_RAMP).clamp(0.0, 1.0);
-            ramp * ramp * (3.0 - 2.0 * ramp)
+        let inside = (position - first).min(last - position) - point.overshoot;
+        if inside < 0.0 {
+            return None;
+        }
+        let face = if set_back > 0.0 {
+            let face = ((inside - set_back) / PORTAL_RAMP).clamp(0.0, 1.0);
+            face * face * (3.0 - 2.0 * face)
         } else {
             1.0
         };
-        if cut <= 0.0 {
-            return None;
-        }
-        let face = (1.0 - outside / PORTAL_FACE).clamp(0.0, 1.0) * cut;
         let side = ((point.lateral.abs() - TUNNEL_SHOULDER) / TUNNEL_SPREAD).clamp(0.0, 1.0);
         let side = 1.0 - side * side * (3.0 - 2.0 * side);
         let weight = face.sqrt() * side;
@@ -1087,7 +1093,7 @@ impl Track {
             .bumps
             .iter()
             .map(|bump| {
-                let d = (distance - bump.center) / bump.width;
+                let d = ((distance - bump.center).abs() - bump.flat).max(0.0) / bump.width;
                 bump.height * (-d * d).exp()
             })
             .sum();
@@ -1218,6 +1224,7 @@ impl Track {
                     center,
                     height,
                     width,
+                    flat: 0.0,
                 });
                 let jump = height / (width * width) > 0.022;
                 self.notes.push(PaceNote {
@@ -1252,6 +1259,7 @@ impl Track {
                     center: Self::distance(center),
                     height: -FORD_DEPTH,
                     width: FORD_WIDTH,
+                    flat: FORD_FLAT,
                 });
                 let frozen = self.ground_at(center) == crate::art::Ground::Snow;
                 self.notes.push(PaceNote {
@@ -1372,6 +1380,14 @@ impl Track {
     }
 
     pub fn terrain(&self, x: f32, z: f32) -> Terrain {
+        self.terrain_with(x, z, 0.0)
+    }
+
+    pub fn drawn_terrain(&self, x: f32, z: f32) -> Terrain {
+        self.terrain_with(x, z, PORTAL_SET)
+    }
+
+    fn terrain_with(&self, x: f32, z: f32, portal_set_back: f32) -> Terrain {
         let mut terrain = self.terrain_raw(x, z);
         let road_guard = terrain.road.map_or(1.0, |road| {
             let half = self.half_width(road.index);
@@ -1384,7 +1400,7 @@ impl Track {
             }
         }
         for tunnel in &self.tunnels {
-            if let Some((cover, weight)) = self.tunnel_cover(tunnel, x, z) {
+            if let Some((cover, weight)) = self.tunnel_cover(tunnel, x, z, portal_set_back) {
                 let raised = terrain.height + (cover - terrain.height) * weight;
                 terrain.height = terrain.height.max(raised);
             }
@@ -1762,6 +1778,7 @@ impl Track {
             return -((distance - half).max(0.0) * 0.12);
         }
         let beyond = distance - shoulder;
+        let ditch = self.ditch(index, lateral) * Self::ditch_profile(beyond);
         let smooth = |x: f32| {
             let x = x.clamp(0.0, 1.0);
             x * x * (3.0 - 2.0 * x)
@@ -1774,6 +1791,7 @@ impl Track {
         let open = 1.0 - character.open * 0.7;
         let mut height = -0.24 + bank * t * open + roughness * t.min(1.0);
         height += character.cutting * (5.5 * smooth(beyond / 4.0) + beyond.min(12.0) * 0.15);
+        height -= ditch;
         if character.ledge != 0.0 {
             let amount = character.ledge.abs();
             if character.ledge.signum() == lateral.signum() {
@@ -1791,6 +1809,28 @@ impl Track {
             }
         }
         height
+    }
+
+    pub fn ditch(&self, index: usize, lateral: f32) -> f32 {
+        if index < DITCH_START_INDEX
+            || self.ground_at(index) == crate::art::Ground::Earth
+            || self.character(index).cutting > 0.0
+        {
+            return 0.0;
+        }
+        let side_key = if lateral < 0.0 { 0xd17c } else { 0xd17d };
+        let noise = value_noise(self.seed ^ side_key, Self::distance(index) / DITCH_LENGTH);
+        let amount = ((noise - DITCH_THRESHOLD) / DITCH_FADE).clamp(0.0, 1.0);
+        DITCH_DEPTH * amount * amount * (3.0 - 2.0 * amount)
+    }
+
+    fn ditch_profile(beyond: f32) -> f32 {
+        let across = (beyond - DITCH_OFFSET) / DITCH_WIDTH;
+        if (0.0..=1.0).contains(&across) {
+            (across * std::f32::consts::PI).sin()
+        } else {
+            0.0
+        }
     }
 
     pub fn drawn_lateral(&self, index: usize, offset: f32) -> f32 {
