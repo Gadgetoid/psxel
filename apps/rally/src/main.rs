@@ -1399,6 +1399,33 @@ mod tests {
             let (_, _, lateral) = track.locate(car.x, car.z, index);
             assert!(lateral * side < wall.abs(), "{side} {lateral} {wall}");
         }
+        let start = (40..2900)
+            .find(|&index| track.treeline(index, 1.0).is_some())
+            .unwrap();
+        let approach = track.sample(start - 4);
+        let lateral = track.treeline(start, 1.0).unwrap() + 4.0;
+        let (x, z) = approach.offset(lateral);
+        let mut car = Car::new(&track);
+        car.x = x;
+        car.z = z;
+        car.y = track.terrain(x, z).height;
+        car.index = start - 4;
+        car.heading = approach.heading;
+        let (fx, fz) = approach.forward();
+        car.velocity = (fx * 20.0, fz * 20.0);
+        let controls = Controls {
+            throttle: 1.0,
+            steer: 0.0,
+            handbrake: false,
+        };
+        for _ in 0..120 {
+            car.update(controls, &mut track);
+            let (index, _, lateral) = track.locate(car.x, car.z, car.index);
+            assert!(
+                !track.in_forest(index, lateral),
+                "entered forest at {index} {lateral}"
+            );
+        }
     }
 
     #[test]

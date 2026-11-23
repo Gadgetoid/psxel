@@ -206,6 +206,18 @@ impl Car {
             if distance <= inner || distance >= outer {
                 continue;
             }
+            let (previous_index, _, _) = track.locate(previous_x, previous_z, index);
+            if previous_index != index && track.obstacle(previous_index, side).is_none() {
+                let (fx, fz) = sample.forward();
+                self.x = previous_x;
+                self.z = previous_z;
+                let along = self.velocity.0 * fx + self.velocity.1 * fz;
+                self.velocity.0 -= fx * along * (1.0 + WALL_BOUNCE);
+                self.velocity.1 -= fz * along * (1.0 + WALL_BOUNCE);
+                self.scrub(along.abs());
+                events.impact = events.impact.max(along.abs());
+                continue;
+            }
             let from_road = previous_lateral * side < wall.abs() + obstacle.thickness * 0.5;
             let target = if from_road { inner } else { outer };
             let correction = (target - distance) * side;

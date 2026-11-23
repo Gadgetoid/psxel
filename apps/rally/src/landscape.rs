@@ -544,11 +544,13 @@ impl Landscape {
                     continue;
                 }
                 let vertex = self.coarse(track, ix, iz);
-                if vertex.road_index == u32::MAX || vertex.road_distance < 3.0 * LATTICE {
+                if vertex.road_index == u32::MAX || vertex.road_distance < 5.0 * LATTICE {
                     let Some(road) = track.terrain(x, z).road else {
                         continue;
                     };
-                    if road.distance < track.shoulder(road.index) + 3.0 {
+                    if road.distance < track.shoulder(road.index) + 3.0
+                        || track.in_forest(road.index, road.lateral)
+                    {
                         continue;
                     }
                 }

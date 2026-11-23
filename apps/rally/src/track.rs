@@ -249,10 +249,11 @@ const TREELINE_RUN: usize = 32;
 const TREELINE_MARGIN: usize = 2;
 const TREELINE_CHANCE: f32 = 0.7;
 const TREELINE_SETBACK: f32 = 3.0;
-const TREELINE_DEPTH: f32 = 8.0;
+const TREELINE_DEPTH_MIN: f32 = 10.0;
+const TREELINE_DEPTH_MAX: f32 = 26.0;
+const TREELINE_CLEARANCE: f32 = 2.0;
 const TREELINE_FLAT: f32 = 1.2;
 pub const TREELINE_HEIGHT: f32 = 6.0;
-const TREELINE_THICKNESS: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Obstacle {
@@ -767,7 +768,7 @@ impl Track {
             return Some(Obstacle {
                 lateral,
                 height: TREELINE_HEIGHT,
-                thickness: TREELINE_THICKNESS,
+                thickness: self.treeline_depth(index, side),
                 barrier: false,
                 trees: true,
             });
@@ -815,6 +816,24 @@ impl Track {
         walled.then(|| side * self.treeline_lateral(index))
     }
 
+    pub fn in_forest(&self, index: usize, lateral: f32) -> bool {
+        let side = lateral.signum();
+        self.treeline(index, side).is_some_and(|wall| {
+            let distance = lateral.abs() - wall.abs();
+            distance > -1.0 && distance < self.treeline_depth(index, side) + 2.0
+        })
+    }
+
+    pub fn treeline_depth(&self, index: usize, side: f32) -> f32 {
+        let key = self.seed ^ if side < 0.0 { 0xde91 } else { 0xde92 };
+        let room =
+            self.sample(index).clearance(side) - self.treeline_lateral(index) - TREELINE_CLEARANCE;
+        (TREELINE_DEPTH_MIN
+            + (TREELINE_DEPTH_MAX - TREELINE_DEPTH_MIN) * value_noise(key, index as f32 / 6.0))
+        .min(room)
+        .max(TREELINE_DEPTH_MIN)
+    }
+
     fn treeline_lateral(&self, index: usize) -> f32 {
         self.shoulder(index) + TREELINE_SETBACK
     }
@@ -833,12 +852,8 @@ impl Track {
                 && character.cutting + character.ledge.abs() + character.valley.abs() < 0.05
                 && [-1.0f32, 1.0].iter().all(|&side| {
                     let (x, z) = sample.offset(side * lateral);
-                    sample.clearance(side) > lateral + TREELINE_THICKNESS
+                    sample.clearance(side) > lateral + TREELINE_DEPTH_MIN + TREELINE_CLEARANCE
                         && self.side_height(index, side * lateral).abs() < TREELINE_FLAT
-                        && self
-                            .side_height(index, side * (lateral + TREELINE_DEPTH))
-                            .abs()
-                            < TREELINE_FLAT
                         && !self.riverbed(x, z)
                 })
         })

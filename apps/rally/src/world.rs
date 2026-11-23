@@ -35,6 +35,7 @@ const TREELINE_TEXELS: usize = 16;
 const TREELINE_REPEAT: usize = 4;
 const TREELINE_FLOOR: f32 = 0.35;
 const CANOPY_GAP: f32 = 0.35;
+const CANOPY_CLOSE: f32 = 0.55;
 const CANOPY_REACH: f32 = 5.5;
 const CANOPY_DROOP: f32 = 1.5;
 const SHAFT_CHANCE: f32 = 0.12;
@@ -486,6 +487,13 @@ impl World {
                     .treeline(index, side)
                     .zip(track.treeline(index + 1, side))
             });
+            let canopy = |side: f32| {
+                value_noise(track.seed ^ 0xca70 ^ side as i64 as u64, index as f32 / 7.0)
+            };
+            let closed = walled.iter().all(|walled| walled.is_some())
+                && [-1.0f32, 1.0]
+                    .iter()
+                    .all(|&side| canopy(side) > CANOPY_CLOSE);
             let mut tops: Vec<(f32, f32, f32)> = Vec::new();
             for (side, walled) in [-1.0f32, 1.0].into_iter().zip(walled) {
                 let Some((lateral_a, lateral_b)) = walled else {
@@ -535,22 +543,86 @@ impl World {
                     ),
                 ];
                 renderer.polygon(&points, Surface::textured(wall.texture).tinted(tint), 0, 1);
-                let canopy_noise =
-                    value_noise(track.seed ^ 0xca70 ^ side as i64 as u64, index as f32 / 7.0);
-                if canopy_noise > CANOPY_GAP {
+                let back = |index: usize, lateral: f32, inner: (f32, f32, f32, f32)| {
+                    let depth = track.treeline_depth(index, side);
+                    let (x, ground, z, _) = edge(index, lateral + side * depth);
+                    (x, ground, z, inner.1 + inner.3 - ground)
+                };
+                let (oa, ob) = (back(index, lateral_a, a), back(index + 1, lateral_b, b));
+                let face = |near: (f32, f32, f32, f32), far: (f32, f32, f32, f32), u: (u8, u8)| {
+                    [
+                        Point::new(
+                            local(near.0, near.1 + near.3, near.2),
+                            lit(0.8, near.0, near.2),
+                            (u.0, 0),
+                        ),
+                        Point::new(
+                            local(far.0, far.1 + far.3, far.2),
+                            lit(0.8, far.0, far.2),
+                            (u.1, 0),
+                        ),
+                        Point::new(
+                            local(near.0, near.1, near.2),
+                            lit(TREELINE_FLOOR, near.0, near.2),
+                            (u.0, 63),
+                        ),
+                        Point::new(
+                            local(far.0, far.1, far.2),
+                            lit(TREELINE_FLOOR, far.0, far.2),
+                            (u.1, 63),
+                        ),
+                    ]
+                };
+                let surface = Surface::textured(wall.texture).tinted(tint);
+                renderer.polygon(&face(oa, ob, (u0, u1)), surface, 0, 1);
+                let across =
+                    |depth: f32| (depth * TREELINE_TEXELS as f32 / SAMPLE).min(255.0) as u8;
+                if track.treeline(index.saturating_sub(1), side).is_none() {
+                    let span = across(track.treeline_depth(index, side));
+                    renderer.polygon(&face(a, oa, (0, span)), surface, 0, 2);
+                }
+                if track.treeline(index + 2, side).is_none() {
+                    let span = across(track.treeline_depth(index + 1, side));
+                    renderer.polygon(&face(b, ob, (0, span)), surface, 0, 2);
+                }
+                let roof = tiled(&art.canopy);
+                let span = across(track.treeline_depth(index, side));
+                let points = [
+                    Point::new(local(a.0, a.1 + a.3, a.2), lit(0.9, a.0, a.2), (u0, 0)),
+                    Point::new(local(b.0, b.1 + b.3, b.2), lit(0.9, b.0, b.2), (u1, 0)),
+                    Point::new(
+                        local(oa.0, oa.1 + oa.3, oa.2),
+                        lit(0.9, oa.0, oa.2),
+                        (u0, span),
+                    ),
+                    Point::new(
+                        local(ob.0, ob.1 + ob.3, ob.2),
+                        lit(0.9, ob.0, ob.2),
+                        (u1, span),
+                    ),
+                ];
+                renderer.polygon(&points, Surface::textured(roof.texture).tinted(tint), 0, 2);
+                if closed || canopy(side) > CANOPY_GAP {
+                    let reach = |lateral: f32| {
+                        if closed {
+                            lateral.abs()
+                        } else {
+                            CANOPY_REACH
+                        }
+                    };
                     let (rx, rz) = track.sample(index).right();
                     let (nx, nz) = track.sample(index + 1).right();
-                    let inward = |x: f32, y: f32, z: f32, rx: f32, rz: f32| {
+                    let inward = |x: f32, y: f32, z: f32, rx: f32, rz: f32, reach: f32| {
                         (
-                            x - rx * side * CANOPY_REACH,
+                            x - rx * side * reach,
                             y - CANOPY_DROOP,
-                            z - rz * side * CANOPY_REACH,
+                            z - rz * side * reach,
                         )
                     };
                     let (ta, tb) = ((a.0, a.1 + a.3, a.2), (b.0, b.1 + b.3, b.2));
                     let (ia, ib) = (
-                        inward(ta.0, ta.1, ta.2, rx, rz),
-                        inward(tb.0, tb.1, tb.2, nx, nz),
+                        inward(ta.0, ta.1, ta.2, rx, rz, reach(lateral_a)),
+                        inward(tb.0, tb.1, tb.2, nx, nz, reach(lateral_b)),
                     );
                     tops.push((
                         (ia.0 + ib.0) * 0.5,
@@ -558,7 +630,8 @@ impl World {
                         (ia.2 + ib.2) * 0.5,
                     ));
                     let leaves = tiled(&art.canopy);
-                    let span = (CANOPY_REACH * TREELINE_TEXELS as f32 / SAMPLE) as u8;
+                    let span =
+                        (reach(lateral_a) * TREELINE_TEXELS as f32 / SAMPLE).min(255.0) as u8;
                     let points = [
                         Point::new(local(ta.0, ta.1, ta.2), lit(0.7, ta.0, ta.2), (u0, 0)),
                         Point::new(local(tb.0, tb.1, tb.2), lit(0.7, tb.0, tb.2), (u1, 0)),
@@ -595,7 +668,8 @@ impl World {
                 }
             }
             let shaft_key = hash(track.seed ^ 0x5aff, index as u64, 0);
-            if tops.len() == 2
+            if closed
+                && tops.len() == 2
                 && hash_float(shaft_key, 1, 0) < SHAFT_CHANCE
                 && lighting.daylight > 0.3
             {
@@ -1587,6 +1661,9 @@ impl World {
                                 + slot as f32 * 3.0)
                         }
                     };
+                    if track.in_forest(index, lateral) {
+                        continue;
+                    }
                     if lateral.abs() > sample.clearance(lateral).min(sample.fold(lateral)) - 1.5 {
                         continue;
                     }
