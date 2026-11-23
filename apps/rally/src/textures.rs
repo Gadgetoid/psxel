@@ -101,6 +101,10 @@ pub(crate) fn car_clut() -> Clut {
     clut(Slot::Car)
 }
 
+pub(crate) fn wheel_clut() -> Clut {
+    Clut::new(Slot::Car as u16 * 16, CLUT_Y + 1)
+}
+
 fn clut(slot: Slot) -> Clut {
     Clut::new(slot as u16 * 16, CLUT_Y)
 }

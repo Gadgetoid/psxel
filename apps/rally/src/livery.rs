@@ -2,7 +2,7 @@ use psx_prim::Texture;
 use psx_vram::{TexPage, TextureDepth, Vram};
 
 use crate::biome::{scale_rgb, Rgb};
-use crate::textures::{car_clut, color, Canvas, Image};
+use crate::textures::{car_clut, color, wheel_clut, Canvas, Image};
 
 pub const PAGE_X: u8 = 6;
 
@@ -24,48 +24,110 @@ const BONNET: u8 = 15;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Livery {
+    pub name: &'static str,
     pub paint: Rgb,
     pub stripe: Rgb,
     pub pinstripe: Rgb,
     pub bonnet: Rgb,
+    pub wheel: Rgb,
 }
 
-pub const LIVERIES: [Livery; 6] = [
+pub const LIVERIES: [Livery; 12] = [
     Livery {
-        paint: [235, 235, 230],
-        stripe: [30, 70, 190],
-        pinstripe: [20, 30, 90],
+        name: "WORKS WHITE",
+        paint: [236, 236, 230],
+        stripe: [30, 80, 190],
+        pinstripe: [20, 35, 100],
+        bonnet: [236, 236, 230],
+        wheel: [235, 235, 235],
+    },
+    Livery {
+        name: "CASTROL",
+        paint: [238, 236, 226],
+        stripe: [20, 20, 22],
+        pinstripe: [200, 30, 30],
+        bonnet: [245, 200, 30],
+        wheel: [235, 235, 235],
+    },
+    Livery {
+        name: "LIME",
+        paint: [120, 200, 40],
+        stripe: [245, 205, 30],
+        pinstripe: [30, 90, 20],
+        bonnet: [245, 205, 30],
+        wheel: [200, 200, 205],
+    },
+    Livery {
+        name: "OLYMPIC BLUE",
+        paint: [110, 165, 220],
+        stripe: [30, 60, 150],
+        pinstripe: [235, 235, 235],
+        bonnet: [110, 165, 220],
+        wheel: [205, 205, 210],
+    },
+    Livery {
+        name: "WORLD CUP",
+        paint: [238, 238, 232],
+        stripe: [40, 90, 200],
+        pinstripe: [200, 30, 30],
         bonnet: [20, 20, 22],
+        wheel: [235, 235, 235],
     },
     Livery {
-        paint: [235, 232, 220],
-        stripe: [200, 30, 30],
-        pinstripe: [110, 15, 15],
-        bonnet: [235, 232, 220],
+        name: "RS SILVER",
+        paint: [175, 178, 182],
+        stripe: [120, 20, 30],
+        pinstripe: [240, 240, 240],
+        bonnet: [175, 178, 182],
+        wheel: [205, 165, 60],
     },
     Livery {
-        paint: [25, 45, 120],
-        stripe: [235, 235, 235],
-        pinstripe: [120, 170, 230],
-        bonnet: [25, 45, 120],
-    },
-    Livery {
-        paint: [190, 25, 25],
+        name: "FORD BLUE",
+        paint: [30, 70, 190],
         stripe: [240, 240, 240],
-        pinstripe: [60, 60, 60],
+        pinstripe: [20, 30, 90],
+        bonnet: [30, 70, 190],
+        wheel: [205, 165, 60],
+    },
+    Livery {
+        name: "GUNMETAL",
+        paint: [70, 74, 80],
+        stripe: [40, 42, 46],
+        pinstripe: [150, 20, 20],
+        bonnet: [70, 74, 80],
+        wheel: [25, 25, 28],
+    },
+    Livery {
+        name: "NAVY",
+        paint: [30, 40, 120],
+        stripe: [240, 240, 240],
+        pinstripe: [150, 170, 220],
+        bonnet: [30, 40, 120],
+        wheel: [205, 205, 210],
+    },
+    Livery {
+        name: "GULF",
+        paint: [150, 200, 225],
+        stripe: [245, 120, 30],
+        pinstripe: [245, 120, 30],
+        bonnet: [150, 200, 225],
+        wheel: [245, 120, 30],
+    },
+    Livery {
+        name: "TANGERINE",
+        paint: [245, 120, 25],
+        stripe: [20, 20, 22],
+        pinstripe: [20, 20, 22],
         bonnet: [20, 20, 22],
+        wheel: [205, 205, 210],
     },
     Livery {
-        paint: [240, 200, 30],
-        stripe: [25, 25, 25],
-        pinstripe: [25, 25, 25],
-        bonnet: [240, 200, 30],
-    },
-    Livery {
-        paint: [30, 80, 50],
-        stripe: [235, 230, 210],
-        pinstripe: [230, 190, 40],
-        bonnet: [30, 80, 50],
+        name: "TURQUOISE",
+        paint: [60, 200, 215],
+        stripe: [30, 110, 160],
+        pinstripe: [235, 235, 235],
+        bonnet: [60, 200, 215],
+        wheel: [40, 120, 200],
     },
 ];
 
@@ -340,7 +402,13 @@ pub fn build(vram: &mut Vram, number: u32) -> CarAtlas {
         roof: image(64, 96, 64, 64),
         door_glass: image(128, 96, 32, 32),
         quarter_glass: image(160, 96, 32, 32),
-        wheel: image(192, 96, 32, 32),
+        wheel: Image {
+            texture: Texture {
+                clut: wheel_clut(),
+                ..image(192, 96, 32, 32).texture
+            },
+            ..image(192, 96, 32, 32)
+        },
         lamp: image(224, 96, 32, 32),
         flap: image(128, 128, 16, 32),
         chrome: image(144, 128, 16, 16),
@@ -370,4 +438,7 @@ pub fn write_clut(vram: &mut Vram, livery: &Livery, braking: bool) {
     });
     colors[BONNET as usize] = color(livery.bonnet);
     vram.write_clut(car_clut(), &colors);
+    colors[CHROME as usize] = color(livery.wheel);
+    colors[CHROME_DARK as usize] = color(scale_rgb(livery.wheel, 0.55));
+    vram.write_clut(wheel_clut(), &colors);
 }

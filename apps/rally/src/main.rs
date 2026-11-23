@@ -109,6 +109,7 @@ struct Rally {
     hide_hud: bool,
     menu_selection: usize,
     menu_latch: bool,
+    livery_index: usize,
     render_ms: f32,
     seed: u64,
 }
@@ -148,7 +149,8 @@ impl Rally {
         let mut vram = Vram::new();
         let atlas = Atlas::build(&mut vram, seed);
         let art = art::Art::load(&mut vram);
-        let livery = livery::LIVERIES[(seed % livery::LIVERIES.len() as u64) as usize];
+        let livery_index = storage::load_livery().unwrap_or(seed as usize) % livery::LIVERIES.len();
+        let livery = livery::LIVERIES[livery_index];
         let car_atlas = livery::build(&mut vram, (seed % 98) as u32 + 1);
         livery::write_clut(&mut vram, &livery, false);
         let track = Track::new(seed);
@@ -201,6 +203,7 @@ impl Rally {
             hide_hud: false,
             menu_selection: 0,
             menu_latch: false,
+            livery_index,
             render_ms: 0.0,
             seed,
             track,
@@ -227,6 +230,14 @@ impl Rally {
         self.autopilot = autopilot;
         self.mode = mode;
         self.menu_selection = menu_selection;
+    }
+
+    fn select_livery(&mut self, step: i32) {
+        let count = livery::LIVERIES.len() as i32;
+        self.livery_index = (self.livery_index as i32 + step).rem_euclid(count) as usize;
+        self.livery = livery::LIVERIES[self.livery_index];
+        storage::save_livery(self.livery_index);
+        self.sound.trigger(sound::Effect::Call, 0.3, 1.2);
     }
 
     fn autopilot_controls(&self) -> Controls {
@@ -632,6 +643,13 @@ impl Rally {
                         Size::Small,
                     );
                 }
+                let livery_y = MENU_Y + MODES.len() as i16 * MENU_SPACING;
+                hud.centered(
+                    livery_y,
+                    &format!("< {} >", self.livery.name),
+                    CYAN,
+                    Size::Large,
+                );
                 for (index, (_, label)) in MODES.iter().enumerate() {
                     let y = MENU_Y + index as i16 * MENU_SPACING;
                     if index == self.menu_selection {
@@ -660,7 +678,12 @@ impl Rally {
                     WHITE,
                     Size::Small,
                 );
-                hud.centered(220, "TAP A MODE, OR ENTER / START", WHITE, Size::Small);
+                hud.centered(
+                    220,
+                    "TAP A MODE OR START   LEFT / RIGHT: CAR",
+                    WHITE,
+                    Size::Small,
+                );
                 return;
             }
             State::Countdown(remaining) => {
@@ -882,7 +905,33 @@ impl Game for Rally {
                     || input.just_pressed(Key::KeyS)
                     || input.pad_pressed(psx_engine::Gamepad::DOWN)
                     || (vertical > 0.0 && !self.menu_latch);
-                self.menu_latch = vertical != 0.0;
+                let horizontal = input.gamepad.map(|pad| pad.stick(0, 0.5)).unwrap_or(0.0);
+                let mut cycle = 0i32;
+                if input.just_pressed(Key::ArrowLeft)
+                    || input.pad_pressed(psx_engine::Gamepad::LEFT)
+                    || (horizontal < 0.0 && !self.menu_latch)
+                {
+                    cycle = -1;
+                }
+                if input.just_pressed(Key::ArrowRight)
+                    || input.pad_pressed(psx_engine::Gamepad::RIGHT)
+                    || (horizontal > 0.0 && !self.menu_latch)
+                {
+                    cycle = 1;
+                }
+                self.menu_latch = vertical != 0.0 || horizontal != 0.0;
+                if input.tapped {
+                    if let Some(drag) = input.drag {
+                        let (x, y) = input.to_frame(drag.start, SCREEN_WIDTH as u32);
+                        let row = (y as i16 - MENU_Y + 4).div_euclid(MENU_SPACING);
+                        if row == MODES.len() as i16 {
+                            cycle = if x < SCREEN_WIDTH / 2 { -1 } else { 1 };
+                        }
+                    }
+                }
+                if cycle != 0 {
+                    self.select_livery(cycle);
+                }
                 if up || down {
                     self.menu_selection = (self.menu_selection + 1) % MODES.len();
                     self.sound.trigger(sound::Effect::Call, 0.3, 1.5);
@@ -896,7 +945,12 @@ impl Game for Rally {
                         }
                     }
                 }
-                if confirm {
+                let on_livery_row = input.tapped
+                    && input.drag.is_some_and(|drag| {
+                        let (_, y) = input.to_frame(drag.start, SCREEN_WIDTH as u32);
+                        (y as i16 - MENU_Y + 4).div_euclid(MENU_SPACING) == MODES.len() as i16
+                    });
+                if confirm && !on_livery_row {
                     self.mode = MODES[self.menu_selection].0;
                     self.restart(self.seed);
                     self.state = State::Countdown(3.0);

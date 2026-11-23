@@ -28,3 +28,28 @@ pub fn load_best() -> f32 {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_best(_best: f32) {}
+
+const LIVERY_KEY: &str = "psx-rally-livery";
+
+#[cfg(target_arch = "wasm32")]
+pub fn load_livery() -> Option<usize> {
+    storage()
+        .and_then(|storage| storage.get_item(LIVERY_KEY).ok().flatten())
+        .and_then(|value| value.parse().ok())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn save_livery(index: usize) {
+    if let Some(storage) = storage() {
+        let _ = storage.set_item(LIVERY_KEY, &index.to_string());
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_livery() -> Option<usize> {
+    let _ = LIVERY_KEY;
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_livery(_index: usize) {}
