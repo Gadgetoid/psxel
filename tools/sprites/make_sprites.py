@@ -69,6 +69,9 @@ LATE_TEXTURES = [
     ("wall_panels", "weathered_reinforced_conrete_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("metal_blue", "blue_painted_weathered_metal_*", 2, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("metal_red", "red_painted_weathered_metal_*", 2, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("road_single", "single_track_dirt_road_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("verge_dirt", "grassy_dirt_*", 1, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("puddle_mud", "muddy_puddle_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
 ]
 
 LATE_ROADS = [

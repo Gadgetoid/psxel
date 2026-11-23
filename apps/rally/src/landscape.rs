@@ -32,6 +32,7 @@ struct Vertex {
     height: f32,
     road_index: u32,
     road_distance: f32,
+    slot: bool,
 }
 
 #[derive(Default)]
@@ -96,6 +97,7 @@ impl Landscape {
             height,
             road_index,
             road_distance,
+            slot: track.tunnel_slot(x, z),
         };
         let mut cache = self.cache.borrow_mut();
         if cache.len() > CACHE_LIMIT {
@@ -194,6 +196,9 @@ impl Landscape {
                     let (x0, z0) = (gx as f32 * LATTICE, gz as f32 * LATTICE);
                     let corners = [(0, 0), (step, 0), (0, step), (step, step)]
                         .map(|(dx, dz)| self.vertex(track, gx + dx, gz + dz));
+                    if corners.iter().any(|vertex| vertex.slot) {
+                        continue;
+                    }
                     let heights = corners.map(|vertex| vertex.height);
                     let low = heights.iter().copied().fold(f32::MAX, f32::min);
                     let high = heights.iter().copied().fold(f32::MIN, f32::max);

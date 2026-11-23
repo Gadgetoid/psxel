@@ -153,8 +153,15 @@ impl Rally {
         let livery = livery::LIVERIES[livery_index];
         let car_atlas = livery::build(&mut vram, (seed % 98) as u32 + 1);
         livery::write_clut(&mut vram, &livery, false);
-        let track = Track::new(seed);
-        let car = Car::new(&track);
+        let mut track = Track::new(seed);
+        let mut car = Car::new(&track);
+        if let Some(start) = url_parameter("at").and_then(|value| value.parse::<usize>().ok()) {
+            track.ensure(start + 200);
+            let sample = track.sample(start);
+            car.x = sample.x;
+            car.z = sample.z;
+            car.reset_to_track(&track);
+        }
         let camera_heading = car.heading;
         let mut rally = Self {
             vram,
@@ -806,6 +813,11 @@ impl Rally {
             );
             hud.text(6, 38, &text, GREEN);
             hud.text(6, 48, &self.pad_info, GREEN);
+            let location = format!(
+                "SEED {} AT {} X{:.0} Z{:.0} Y{:.0}",
+                self.seed, self.car.index, self.car.x, self.car.z, self.car.y
+            );
+            hud.text(6, 228, &location, GREEN);
         }
     }
 }

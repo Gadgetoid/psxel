@@ -233,6 +233,10 @@ const TUNNEL_COVER: f32 = 9.0;
 const TUNNEL_SHOULDER: f32 = 14.0;
 const TUNNEL_SPREAD: f32 = 45.0;
 const PORTAL_FACE: f32 = 6.0;
+const SLOT_REACH: f32 = 4.0;
+const SLOT_MARGIN: f32 = 1.5;
+pub const TUNNEL_ROOF_HALF: f32 = 15.0;
+pub const TUNNEL_COVER_HEIGHT: f32 = TUNNEL_COVER;
 
 const BRIDGE_CLEARANCE: f32 = 7.5;
 const BRIDGE_RAMP: f32 = 42.0;
@@ -805,6 +809,28 @@ impl Track {
         self.tunnels.push(Tunnel { start, end });
     }
 
+    pub fn tunnel_slot(&self, x: f32, z: f32) -> bool {
+        self.tunnels.iter().any(|tunnel| {
+            let middle = self.samples[(tunnel.start + tunnel.end) / 2];
+            let half_length = (tunnel.end - tunnel.start) as f32 * SAMPLE * 0.5;
+            if (middle.x - x).hypot(middle.z - z) > half_length + SLOT_REACH + 20.0 {
+                return false;
+            }
+            let low = tunnel.start.saturating_sub(3);
+            let high = (tunnel.end + 3).min(self.samples.len() - 2);
+            let Some(point) = (low..high)
+                .map(|index| self.project(index, x, z))
+                .min_by(|a, b| a.distance.total_cmp(&b.distance))
+            else {
+                return false;
+            };
+            let position = Self::distance(point.index) + point.t * SAMPLE;
+            let (first, last) = (Self::distance(tunnel.start), Self::distance(tunnel.end - 1));
+            let along = (first - position).max(position - last).max(0.0) + point.overshoot;
+            along < SLOT_REACH && point.lateral.abs() < self.half_width(point.index) + SLOT_MARGIN
+        })
+    }
+
     pub fn tunnel_hill(&self, x: f32, z: f32) -> bool {
         self.tunnels
             .iter()
@@ -826,6 +852,10 @@ impl Track {
         let position = Self::distance(point.index) + point.t * SAMPLE;
         let (first, last) = (Self::distance(tunnel.start), Self::distance(tunnel.end - 1));
         let outside = (first - position).max(position - last).max(0.0) + point.overshoot;
+        let corridor = point.lateral.abs() < self.half_width(point.index) + SLOT_MARGIN;
+        if outside > 0.0 && corridor {
+            return None;
+        }
         let face = (1.0 - outside / PORTAL_FACE).clamp(0.0, 1.0);
         let side = ((point.lateral.abs() - TUNNEL_SHOULDER) / TUNNEL_SPREAD).clamp(0.0, 1.0);
         let side = 1.0 - side * side * (3.0 - 2.0 * side);
@@ -1336,7 +1366,11 @@ impl Track {
             .iter()
             .chain(&self.rivers)
             .find_map(|ford| Self::stream_hit(ford, x, z, 0.0))
-            .map(|hit| hit.surface)
+            .map(|hit| self.settled_level(hit.surface, x, z))
+    }
+
+    pub fn settled_level(&self, surface: f32, x: f32, z: f32) -> f32 {
+        surface.min(self.terrain(x, z).height + STREAM_BED)
     }
 
     pub fn puddle(&self, index: usize) -> Option<Puddle> {

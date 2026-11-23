@@ -68,6 +68,9 @@ pub struct Art {
     pub concrete_panels: Image,
     pub metal_blue: Image,
     pub metal_red: Image,
+    pub road_single: Image,
+    pub verge_dirt: Image,
+    pub puddle_mud: Image,
     pub rock_texture: Image,
     pub horizon_forest: Image,
     pub horizon_farmland: Image,
@@ -130,6 +133,9 @@ impl Art {
         let concrete_panels = sheet.add(vram, sprite!("wall_panels"), false);
         let metal_blue = sheet.add(vram, sprite!("metal_blue"), false);
         let metal_red = sheet.add(vram, sprite!("metal_red"), false);
+        let road_single = sheet.add(vram, sprite!("road_single"), false);
+        let verge_dirt = sheet.add(vram, sprite!("verge_dirt"), false);
+        let puddle_mud = sheet.add(vram, sprite!("puddle_mud"), false);
         let rock_texture = sheet.add(vram, sprite!("rock_texture"), false);
         let cliff_desert = family!(
             sheet,
@@ -246,6 +252,9 @@ impl Art {
             concrete_panels,
             metal_blue,
             metal_red,
+            road_single,
+            verge_dirt,
+            puddle_mud,
             rock_texture,
             horizon_forest,
             horizon_farmland,

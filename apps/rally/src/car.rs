@@ -19,6 +19,8 @@ const WHEEL_BIAS: i32 = 40;
 const BODY_HALF_WIDTH: f32 = 0.85;
 const WALL_BOUNCE: f32 = 0.3;
 const WALL_SCRUB: f32 = 0.92;
+const CRAWL_SPEED: f32 = 5.0;
+const CRAWL_DRAG_SHARE: f32 = 0.5;
 const MAX_ROLL: f32 = 0.35;
 const WHEEL_OFFSET_FORWARD: f32 = 1.2;
 const WHEEL_OFFSET_SIDE: f32 = 0.8;
@@ -206,6 +208,12 @@ impl Car {
             * (4.0 + (self.velocity.0.hypot(self.velocity.1) - 10.0).max(0.0) * 2.0)
             + if puddle { 0.6 } else { 0.0 };
         let traction = 0.35 + 0.65 * (grip / 0.8).min(1.0);
+        let crawling = self.velocity.0.hypot(self.velocity.1) < CRAWL_SPEED;
+        let rolling_drag = if crawling {
+            rolling_drag.min(ACCELERATION * traction * CRAWL_DRAG_SHARE)
+        } else {
+            rolling_drag
+        };
 
         let steer_rate = if controls.steer.abs() > self.steer.abs() {
             3.0

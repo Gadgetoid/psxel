@@ -2,7 +2,7 @@ use psx_math::{Mat3Fx12, Vec3i16};
 use psx_prim::{BlendMode, Primitive, Vertex};
 use psx_vram::Vram;
 
-use crate::art::{tiled, Art};
+use crate::art::{tiled, Art, Ground, Road};
 use crate::biome::{lerp_rgb, scale_rgb, Horizon, Prop, Rgb, Weather, BIOMES};
 use crate::blend::{Choice, Kind};
 use crate::render::{
@@ -12,7 +12,10 @@ use crate::render::{
 use crate::rng::{hash, hash_float, value_noise, Rng};
 use crate::sprites::band_image;
 use crate::textures::{fog_band, Atlas, Image};
-use crate::track::{NoteKind, Track, BOUNDARY, ROAD_HALF, SAMPLE, STRUCTURE_KERB, TUNNEL_HEIGHT};
+use crate::track::{
+    NoteKind, Track, BOUNDARY, ROAD_HALF, SAMPLE, STRUCTURE_KERB, TUNNEL_COVER_HEIGHT,
+    TUNNEL_HEIGHT, TUNNEL_ROOF_HALF,
+};
 
 pub const VIEW_SAMPLES: usize = 68;
 const BEHIND_SAMPLES: usize = 3;
@@ -23,9 +26,13 @@ const PRECIPITATION_RADIUS: f32 = 24.0;
 const GROUND_BIAS: i32 = 160;
 const WATER_BIAS: i32 = -250;
 const BEAM_STRENGTH: f32 = 0.5;
+const SINGLE_TRACK_HALF: f32 = 3.7;
+const PUDDLE_TEXELS: f32 = 16.0;
 const TUNNEL_DARK: f32 = 0.22;
-const PORTAL_HALF: f32 = 10.0;
-const PORTAL_TOP: f32 = 8.0;
+const PORTAL_HALF: f32 = TUNNEL_ROOF_HALF;
+const PORTAL_TOP: f32 = TUNNEL_COVER_HEIGHT + 1.0;
+const FACADE_TEXELS: f32 = 8.0;
+const ROOF_TEXELS: f32 = 8.0;
 const PARAPET: f32 = 0.9;
 const FASCIA: f32 = 1.1;
 const PIER_SPACING: usize = 4;
@@ -214,7 +221,7 @@ impl World {
         );
         self.draw_bridges(renderer, art, track, window, lighting);
         self.draw_tunnels(renderer, art, track, window, lighting);
-        self.draw_water(renderer, track, camera, window, lighting);
+        self.draw_water(renderer, art, track, camera, window, lighting);
         self.draw_props(renderer, atlas, art, track, camera, window, lighting);
         let boulder =
             |renderer: &mut Renderer, image: &Image, base: [f32; 3], scale: f32, key: u64| {
@@ -311,6 +318,52 @@ impl World {
             }
         }
         for tunnel in &track.tunnels {
+            if tunnel.end + 2 < start || tunnel.start > end + 2 {
+                continue;
+            }
+            let roof_light = [0, 1, 2].map(|c| {
+                let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * 0.85) / 255.0;
+                (128.0 * light).clamp(0.0, 255.0) as u8
+            });
+            for index in tunnel.start..tunnel.end - 1 {
+                let ground = art
+                    .ground(track.ground_at(index))
+                    .map(tiled)
+                    .unwrap_or(tiled(&art.rock_texture));
+                let anchor = track.sample(index);
+                let origin = world_to_psx(anchor.x, anchor.y, anchor.z);
+                renderer.set_object(origin, Mat3Fx12::IDENTITY);
+                let roof = |sample_index: usize, lateral: f32| {
+                    let sample = track.sample(sample_index);
+                    let (rx, rz) = sample.right();
+                    let (x, z) = (sample.x + rx * lateral, sample.z + rz * lateral);
+                    let y = track.terrain(x, z).height + 0.05;
+                    let position = world_to_psx(x, y, z);
+                    let along = if sample_index == index {
+                        0
+                    } else {
+                        (SAMPLE * ROOF_TEXELS) as u8
+                    };
+                    Point::new(
+                        Vec3i16::new(
+                            (position.x - origin.x) as i16,
+                            (position.y - origin.y) as i16,
+                            (position.z - origin.z) as i16,
+                        ),
+                        lighting.lit_by_beam(roof_light, x, z),
+                        (((lateral + TUNNEL_ROOF_HALF) * ROOF_TEXELS) as u8, along),
+                    )
+                };
+                for (left, right) in [(-TUNNEL_ROOF_HALF, 0.0), (0.0, TUNNEL_ROOF_HALF)] {
+                    let points = [
+                        roof(index, left),
+                        roof(index, right),
+                        roof(index + 1, left),
+                        roof(index + 1, right),
+                    ];
+                    renderer.polygon(&points, Surface::textured(ground.texture), GROUND_BIAS, 1);
+                }
+            }
             for (index, facing) in [(tunnel.start, -1.0f32), (tunnel.end - 1, 1.0)] {
                 if index < start || index > end {
                     continue;
@@ -344,8 +397,8 @@ impl World {
                 });
                 let uv = |lateral: f32, up: f32| {
                     (
-                        ((lateral + PORTAL_HALF) * PORTAL_TEXELS).clamp(0.0, 255.0) as u8,
-                        ((PORTAL_TOP - up) * PORTAL_TEXELS).clamp(0.0, 255.0) as u8,
+                        ((lateral + PORTAL_HALF) * FACADE_TEXELS).clamp(0.0, 255.0) as u8,
+                        ((PORTAL_TOP - up) * FACADE_TEXELS).clamp(0.0, 255.0) as u8,
                     )
                 };
                 let quads = [
@@ -510,6 +563,7 @@ impl World {
     fn draw_water(
         &self,
         renderer: &mut Renderer,
+        art: &Art,
         track: &Track,
         camera: &Camera,
         window: (usize, usize),
@@ -517,6 +571,15 @@ impl World {
     ) {
         let surface = Surface::gouraud().blended(BlendMode::Half);
         let shine = lerp_rgb(lighting.sky_horizon, lighting.sky_top, 0.3);
+        let mud = tiled(&art.puddle_mud);
+        let mud_surface = Surface::textured(mud.texture).blended(BlendMode::Half);
+        let mud_tint = scale_rgb(shine, 0.8);
+        let puddle_uv = |x: f32, z: f32| {
+            (
+                (32.0 + x * PUDDLE_TEXELS).clamp(0.0, 255.0) as u8,
+                (32.0 + z * PUDDLE_TEXELS).clamp(0.0, 255.0) as u8,
+            )
+        };
         let (start, end) = window;
         for index in start..end {
             let Some(puddle) = track.puddle(index) else {
@@ -535,17 +598,22 @@ impl World {
                 let z = cos * along - sin * across;
                 Point::new(
                     Vec3i16::new(units(x) as i16, 0, units(z) as i16),
-                    lighting.lit_by_beam(shine, puddle.x + x, puddle.z + z),
-                    (0, 0),
+                    lighting.lit_by_beam(mud_tint, puddle.x + x, puddle.z + z),
+                    puddle_uv(x, z),
                 )
             };
             let centre = Point::new(
                 Vec3i16::new(0, 0, 0),
-                lighting.lit_by_beam(shine, puddle.x, puddle.z),
-                (0, 0),
+                lighting.lit_by_beam(mud_tint, puddle.x, puddle.z),
+                puddle_uv(0.0, 0.0),
             );
             for step in 0..8 {
-                renderer.polygon(&[centre, rim(step + 1), rim(step)], surface, WATER_BIAS, 0);
+                renderer.polygon(
+                    &[centre, rim(step + 1), rim(step)],
+                    mud_surface,
+                    WATER_BIAS,
+                    0,
+                );
             }
         }
 
@@ -564,12 +632,13 @@ impl World {
                 let length = dx.hypot(dz).max(1e-3);
                 let (nx, nz) = (dz / length, -dx / length);
                 let width = point.width + 1.5;
+                let level = track.settled_level(point.surface, point.x, point.z);
                 [-1.0f32, 1.0].map(|side| {
                     let (x, z) = (point.x + nx * width * side, point.z + nz * width * side);
                     Point::new(
                         Vec3i16::new(
                             units(x - ford.x) as i16,
-                            -units(point.surface - ford.level) as i16,
+                            -units(level - ford.level) as i16,
                             units(z - ford.z) as i16,
                         ),
                         lighting.lit_by_beam(stream, x, z),
@@ -844,12 +913,20 @@ impl World {
                 };
                 let (first, second) = (&BIOMES[a], &BIOMES[b]);
                 let variant = hash(track.seed, index as u64 / 2, 77);
-                let road_image = pick(
-                    Kind::Road,
-                    *art.road(first.road, variant),
-                    *art.road(second.road, variant),
-                    false,
-                );
+                let biome = if t > 0.5 { second } else { first };
+                let single_track = track.half_width(index) < SINGLE_TRACK_HALF
+                    && matches!(biome.road, Road::Gravel | Road::Mud);
+                let road_image = if single_track {
+                    art.road_single
+                } else {
+                    pick(
+                        Kind::Road,
+                        *art.road(first.road, variant),
+                        *art.road(second.road, variant),
+                        false,
+                    )
+                };
+                let grassy_verge = matches!(biome.ground, Ground::Grass | Ground::Leaves);
                 let ground_image = match (art.ground(first.ground), art.ground(second.ground)) {
                     (Some(from), Some(to)) => {
                         Some(pick(Kind::Ground, tiled(from), tiled(to), true))
@@ -876,6 +953,8 @@ impl World {
                         (road_image, false, ROAD_BIAS, 1.0)
                     } else if steep {
                         (cliff_image, true, GROUND_BIAS, 0.95)
+                    } else if is_verge && grassy_verge {
+                        (tiled(&art.verge_dirt), true, ROAD_BIAS, 0.9)
                     } else if let Some(ground) = ground_image {
                         (
                             ground,
