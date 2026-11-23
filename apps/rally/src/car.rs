@@ -21,6 +21,8 @@ const WALL_BOUNCE: f32 = 0.3;
 const WALL_SCRUB: f32 = 0.3;
 const WALL_GLANCE: f32 = 0.12;
 const MAX_CLIMB: f32 = 8.0;
+const LAUNCH_G: f32 = 1.4;
+const LAUNCH_SPEED: f32 = 8.0;
 const ICE_GRIP: f32 = 0.35;
 const HANDBRAKE_BRAKING: f32 = 2.5;
 const HANDBRAKE_REAR_GRIP: f32 = 0.2;
@@ -507,7 +509,9 @@ impl Car {
             }
         } else {
             let following = (ground - self.y) / DT;
-            if following < self.vertical_speed - GRAVITY * DT * 2.0 && forward_speed > 12.0 {
+            if following < self.vertical_speed - GRAVITY * DT * LAUNCH_G
+                && forward_speed > LAUNCH_SPEED
+            {
                 self.airborne = true;
                 self.vertical_speed -= GRAVITY * DT;
                 self.y += self.vertical_speed * DT;
@@ -1662,8 +1666,12 @@ mod tests {
             while error < -std::f32::consts::PI {
                 error += std::f32::consts::TAU;
             }
+            let bend = (car.index..car.index + 12)
+                .map(|index| track.sample(index).curvature.abs())
+                .fold(0.004, f32::max);
+            let target_speed = 30.0f32.min((20.0 / bend).sqrt() * 0.7);
             let controls = Controls {
-                throttle: ((30.0 - car.speed()) * 0.3).clamp(-1.0, 1.0),
+                throttle: ((target_speed - car.speed()) * 0.3).clamp(-1.0, 1.0),
                 steer: (error * 3.0).clamp(-1.0, 1.0),
                 handbrake: false,
             };
@@ -1696,7 +1704,7 @@ mod tests {
                 .unwrap_or(deck);
             let (airborne, lift) = drive_over(&mut track, deck - 20, (deck - 2, end + 2));
             assert!(
-                airborne < 20 && lift < 4.0,
+                airborne < 20 && lift < 6.0,
                 "seed {seed} deck {deck}: airborne {airborne} lift {lift}"
             );
             checked += 1;

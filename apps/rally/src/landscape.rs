@@ -23,8 +23,6 @@ const FAR_RADIUS: f32 = 256.0;
 const PROP_RADIUS: f32 = 210.0;
 const GROUND_BIAS: i32 = 200;
 const UNDER_ROAD: f32 = 0.6;
-const NEAR_ROAD: f32 = 12.0;
-const NEAR_ROAD_RAMP: f32 = 0.7;
 const CACHE_LIMIT: usize = 60_000;
 
 #[derive(Clone, Copy)]
@@ -82,12 +80,6 @@ impl Landscape {
         let mut height = terrain.height;
         if let Some(road) = terrain.road.filter(|_| !track.tunnel_hill(x, z)) {
             let half = track.half_width(road.index);
-            let shoulder = track.shoulder(road.index);
-            let road_y = track.ground(road.index, road.t, 0.0);
-            if road.distance < shoulder + NEAR_ROAD {
-                let ramp = road_y + 0.3 + (road.distance - shoulder).max(0.0) * NEAR_ROAD_RAMP;
-                height = height.min(ramp);
-            }
             if road.distance < half + LATTICE {
                 height -=
                     UNDER_ROAD * (1.0 - (road.distance - half).max(0.0) / LATTICE).clamp(0.0, 1.0);

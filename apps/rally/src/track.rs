@@ -320,6 +320,9 @@ const FAR_BLEND_LENGTH: f32 = 70.0;
 const BLEND_RANGE: f32 = 30.0;
 const BLEND_SOFTNESS: f32 = 9.0;
 const OVERSHOOT_SOFTNESS: f32 = 1.5;
+const NEAR_ROAD: f32 = 40.0;
+const NEAR_ROAD_CURVE: f32 = 0.12;
+const NEAR_ROAD_RAMP: f32 = 0.7;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoadPoint {
@@ -839,7 +842,8 @@ impl Track {
         let target =
             floor + (ravine.road_y + 3.0 - floor) * wall.powf(0.6) + RAVINE_RIM * wall.powi(6);
         let end = ((along.abs() - RAVINE_REACH) / RAVINE_FADE).clamp(0.0, 1.0);
-        Some((target, 1.0 - end * end * (3.0 - 2.0 * end)))
+        let rim = 1.0 - wall.powi(4);
+        Some((target, (1.0 - end * end * (3.0 - 2.0 * end)) * rim))
     }
 
     fn over_ravine(&self, sample: &Sample) -> bool {
@@ -1393,6 +1397,15 @@ impl Track {
                 terrain.height += (bed - terrain.height) * weight;
             }
         }
+        if let Some(road) = terrain.road {
+            let shoulder = self.shoulder(road.index);
+            if road.distance < shoulder + NEAR_ROAD && !self.tunnel_hill(x, z) {
+                let road_y = self.ground(road.index, road.t, 0.0);
+                let out = (road.distance - shoulder).max(0.0);
+                let ramp = road_y + 0.3 + out * NEAR_ROAD_RAMP + out * out * NEAR_ROAD_CURVE;
+                terrain.height = terrain.height.min(ramp);
+            }
+        }
         terrain
     }
 
@@ -1620,13 +1633,19 @@ impl Track {
         };
         let mut total = 0.0;
         let mut weighted = 0.0;
+        let least_overshoot = points
+            .iter()
+            .filter(|point| point.distance - nearest.distance <= BLEND_RANGE)
+            .map(|point| point.overshoot)
+            .fold(f32::MAX, f32::min);
         for point in &points {
             let excess = point.distance - nearest.distance;
             if excess > BLEND_RANGE {
                 continue;
             }
+            let overshoot = point.overshoot - least_overshoot;
             let weight = (-(excess / BLEND_SOFTNESS).powi(2)).exp()
-                * (-(point.overshoot / OVERSHOOT_SOFTNESS).powi(2)).exp();
+                * (-(overshoot / OVERSHOOT_SOFTNESS).powi(2)).exp();
             if weight < 1e-6 {
                 continue;
             }
@@ -2066,7 +2085,8 @@ mod tests {
             for river in &track.rivers {
                 for point in &river.path {
                     let ground = track.terrain(point.x, point.z).height;
-                    assert!(point.surface < ground + 1.0, "{} {ground}", point.surface);
+                    let level = track.settled_level(point.surface, point.x, point.z);
+                    assert!(level < ground + 1.0, "{level} {ground}");
                 }
             }
             for tunnel in &track.tunnels {
