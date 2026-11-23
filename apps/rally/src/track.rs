@@ -226,6 +226,7 @@ const RAVINE_CHANCE: f32 = 0.2;
 const RAVINE_REACH: f32 = 120.0;
 const RAVINE_FADE: f32 = 30.0;
 const RAVINE_RIM: f32 = 80.0;
+const RIVERBED_MARGIN: f32 = 2.0;
 const RAVINE_RIVER_CHANCE: f32 = 0.5;
 const TUNNEL_CHANCE: f32 = 0.35;
 const TUNNEL_COVER: f32 = 9.0;
@@ -651,6 +652,22 @@ impl Track {
             }
         }
         None
+    }
+
+    pub fn spans_ravine(&self, index: usize) -> bool {
+        self.over_ravine(&self.sample(index))
+    }
+
+    pub fn riverbed(&self, x: f32, z: f32) -> bool {
+        self.fords
+            .iter()
+            .chain(&self.rivers)
+            .any(|ford| Self::stream_hit(ford, x, z, RIVERBED_MARGIN).is_some())
+    }
+
+    pub fn ground_at(&self, index: usize) -> crate::art::Ground {
+        let (a, b, t) = self.biomes.at(Self::distance(index));
+        crate::biome::BIOMES[if t > 0.5 { b } else { a }].ground
     }
 
     pub fn is_deck(&self, index: usize) -> bool {

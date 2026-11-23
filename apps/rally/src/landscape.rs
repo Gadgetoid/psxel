@@ -225,6 +225,7 @@ impl Landscape {
                     let target = lerp_rgb(average_a, average_b, t);
                     let key = hash_float(track.seed ^ 0xb1e7, ix as u64, iz as u64);
                     let kind = if steep { Kind::Cliff } else { Kind::Ground };
+                    let riverbed = !steep && track.riverbed(x0 + size * 0.5, z0 + size * 0.5);
                     let (image, windowed, average) = match art.blends.choose(kind, (a, b), t, key) {
                         Choice::First => (image_a, windowed_a, average_a),
                         Choice::Second => (image_b, windowed_b, average_b),
@@ -232,6 +233,12 @@ impl Landscape {
                             let mix = tiled(&mix);
                             (mix, true, average_of(&mix))
                         }
+                    };
+                    let (image, windowed, average) = if riverbed {
+                        let bed = tiled(&art.riverbed);
+                        (bed, true, average_of(&bed))
+                    } else {
+                        (image, windowed, average)
                     };
                     let slope_x =
                         ((heights[1] + heights[3]) - (heights[0] + heights[2])) * 0.5 / size;

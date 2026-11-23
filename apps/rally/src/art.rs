@@ -62,6 +62,12 @@ pub struct Art {
     pub earth: Image,
     pub stone_wall: Image,
     pub tunnel_wall: Image,
+    pub riverbed: Image,
+    pub desert_wall: Image,
+    pub concrete: Image,
+    pub concrete_panels: Image,
+    pub metal_blue: Image,
+    pub metal_red: Image,
     pub rock_texture: Image,
     pub horizon_forest: Image,
     pub horizon_farmland: Image,
@@ -118,6 +124,12 @@ impl Art {
         let earth = sheet.add(vram, sprite!("ground_earth"), false);
         let stone_wall = sheet.add(vram, sprite!("wall_stone"), false);
         let tunnel_wall = sheet.add(vram, sprite!("wall_tunnel"), false);
+        let riverbed = sheet.add(vram, sprite!("ground_riverbed"), false);
+        let desert_wall = sheet.add(vram, sprite!("wall_desert"), false);
+        let concrete = sheet.add(vram, sprite!("wall_concrete"), false);
+        let concrete_panels = sheet.add(vram, sprite!("wall_panels"), false);
+        let metal_blue = sheet.add(vram, sprite!("metal_blue"), false);
+        let metal_red = sheet.add(vram, sprite!("metal_red"), false);
         let rock_texture = sheet.add(vram, sprite!("rock_texture"), false);
         let cliff_desert = family!(
             sheet,
@@ -228,6 +240,12 @@ impl Art {
             earth,
             stone_wall,
             tunnel_wall,
+            riverbed,
+            desert_wall,
+            concrete,
+            concrete_panels,
+            metal_blue,
+            metal_red,
             rock_texture,
             horizon_forest,
             horizon_farmland,
@@ -265,6 +283,22 @@ impl Art {
                 tiled(&self.cliff_desert[(variant % self.cliff_desert.len() as u64) as usize])
             }
             _ => tiled(&self.rock_texture),
+        }
+    }
+
+    pub fn bridge_wall(&self, ground: Ground) -> Image {
+        match ground {
+            Ground::Earth => self.desert_wall,
+            Ground::Wheat | Ground::Snow => self.concrete,
+            Ground::Grass | Ground::Leaves => self.stone_wall,
+        }
+    }
+
+    pub fn tunnel_lining(&self, ground: Ground) -> Image {
+        match ground {
+            Ground::Earth => self.desert_wall,
+            Ground::Wheat | Ground::Snow => self.concrete_panels,
+            Ground::Grass | Ground::Leaves => self.tunnel_wall,
         }
     }
 

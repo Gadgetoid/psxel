@@ -234,7 +234,7 @@ impl World {
         lighting: Lighting,
     ) {
         let (start, end) = window;
-        let rock = tiled(&art.tunnel_wall);
+
         let wall_color = |x: f32, z: f32, shade: f32| {
             let base = [0, 1, 2].map(|c| {
                 let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * 0.4) / 255.0;
@@ -254,6 +254,7 @@ impl World {
             if !track.is_tunnel(index) {
                 continue;
             }
+            let rock = tiled(&art.tunnel_lining(track.ground_at(index)));
             let anchor = track.sample(index);
             let origin = world_to_psx(anchor.x, anchor.y, anchor.z);
             renderer.set_object(origin, Mat3Fx12::IDENTITY);
@@ -314,6 +315,7 @@ impl World {
                 if index < start || index > end {
                     continue;
                 }
+                let rock = tiled(&art.tunnel_lining(track.ground_at(index)));
                 let sample = track.sample(index);
                 let (fx, fz) = sample.forward();
                 let (rx, rz) = sample.right();
@@ -378,7 +380,6 @@ impl World {
         lighting: Lighting,
     ) {
         let (start, end) = window;
-        let stone = tiled(&art.stone_wall);
         let lit = |shade: f32| {
             [0, 1, 2].map(|c| {
                 let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * shade) / 255.0;
@@ -397,6 +398,15 @@ impl World {
             if !track.is_deck(index) {
                 continue;
             }
+            let ravine = track.spans_ravine(index) || track.spans_ravine(index + 1);
+            let stone = tiled(&if ravine {
+                art.bridge_wall(track.ground_at(index))
+            } else if hash(track.seed, index as u64 / 32, 5) & 1 == 0 {
+                art.metal_blue
+            } else {
+                art.metal_red
+            });
+            let pier = if ravine { stone } else { tiled(&art.concrete) };
             let (a, b) = (track.sample(index), track.sample(index + 1));
             let origin = world_to_psx(a.x, a.y, a.z);
             renderer.set_object(origin, Mat3Fx12::IDENTITY);
@@ -491,7 +501,7 @@ impl World {
                         Point::new(corner(a0, c0, foot), color, (0, height)),
                         Point::new(corner(a1, c1, foot), color, (width, height)),
                     ];
-                    renderer.polygon(&points, Surface::textured(stone.texture), 0, 0);
+                    renderer.polygon(&points, Surface::textured(pier.texture), 0, 0);
                 }
             }
         }

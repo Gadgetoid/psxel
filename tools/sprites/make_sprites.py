@@ -63,6 +63,12 @@ LATE_SPRITES = [
 LATE_TEXTURES = [
     ("wall_stone", "drystone_wall_*", 1, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("wall_tunnel", "tunnel_wall_*", 2, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("ground_riverbed", "riverbed_*", 2, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("wall_desert", "desert_wall_*", 1, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("wall_concrete", "weathered_conrete_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("wall_panels", "weathered_reinforced_conrete_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("metal_blue", "blue_painted_weathered_metal_*", 2, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("metal_red", "red_painted_weathered_metal_*", 2, dict(kind="direct", overlap=0.1, detail=0.8)),
 ]
 
 LATE_ROADS = [
