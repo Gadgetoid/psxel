@@ -35,6 +35,10 @@ const CHECKPOINT_BONUS: f32 = 32.0;
 const CALL_AHEAD: f32 = 70.0;
 const CALL_SECONDS: f32 = 2.6;
 const BLEND_HOLD: f32 = 300.0;
+const LOOK_DEAD_ZONE: f32 = 0.18;
+const LOOK_SPEED: f32 = 3.0;
+const LOOK_RETURN: f32 = 2.5;
+const LOOK_LIFT: f32 = 3.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -78,6 +82,9 @@ struct Rally {
     camera: Camera,
     camera_heading: f32,
     shake: f32,
+    look: (f32, f32),
+    camera_orbit: f32,
+    camera_lift: f32,
     time_left: f32,
     elapsed: f32,
     next_checkpoint: usize,
@@ -159,6 +166,9 @@ impl Rally {
             },
             camera_heading,
             shake: 0.0,
+            look: (0.0, 0.0),
+            camera_orbit: 0.0,
+            camera_lift: 0.0,
             time_left: START_TIME,
             elapsed: 0.0,
             next_checkpoint: CHECKPOINT_SPACING,
@@ -270,6 +280,10 @@ impl Rally {
         let mut steer = axis(&[Key::ArrowLeft, Key::KeyA], &[Key::ArrowRight, Key::KeyD]);
         let mut handbrake = input.held(Key::Space);
         self.drag = None;
+        self.look = input
+            .gamepad
+            .map(|pad| (pad.stick(2, LOOK_DEAD_ZONE), pad.stick(3, LOOK_DEAD_ZONE)))
+            .unwrap_or((0.0, 0.0));
         if let (Some(delta), Some(drag)) = (input.drag_delta(), input.drag) {
             let dead = |value: f32, zone: f32| {
                 if value.abs() < zone {
@@ -480,9 +494,19 @@ impl Rally {
             }
             self.camera_heading += difference * lag;
         }
-        let (fx, fz) = (self.camera_heading.sin(), self.camera_heading.cos());
+        let return_rate = (LOOK_RETURN * DT).min(1.0);
+        if self.look.0 == 0.0 {
+            self.camera_orbit -= self.camera_orbit * return_rate;
+        } else {
+            self.camera_orbit = (self.camera_orbit + self.look.0 * LOOK_SPEED * DT)
+                .clamp(-std::f32::consts::PI, std::f32::consts::PI);
+        }
+        let lift_target = -self.look.1 * LOOK_LIFT;
+        self.camera_lift += (lift_target - self.camera_lift) * return_rate;
+        let view_heading = self.camera_heading + self.camera_orbit;
+        let (fx, fz) = (view_heading.sin(), view_heading.cos());
         let back = if title { 8.5 } else { 7.2 };
-        let height = if title { 2.6 } else { 2.7 };
+        let height = if title { 2.6 } else { 2.7 } + self.camera_lift;
         let mut x = car.x - fx * back;
         let mut z = car.z - fz * back;
         let terrain = self.track.terrain(x, z).height;
@@ -494,10 +518,11 @@ impl Rally {
             z += rng.range(-1.0, 1.0) * self.shake;
             self.shake = (self.shake - DT * 1.5).max(0.0);
         }
+        let lead = 4.0 * self.camera_orbit.cos().max(0.0);
         let target = (
-            car.x + car.forward().0 * 4.0,
+            car.x + car.forward().0 * lead,
             car.y + 1.0,
-            car.z + car.forward().1 * 4.0,
+            car.z + car.forward().1 * lead,
         );
         let (dx, dy, dz) = (target.0 - x, target.1 - y, target.2 - z);
         self.camera = Camera {
