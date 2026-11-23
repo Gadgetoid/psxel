@@ -5,7 +5,7 @@ use crate::biome::Rgb;
 use crate::livery::{CarAtlas, BODY_FRONT, BODY_REAR};
 use crate::render::{angle, world_to_psx, Point, Renderer, Surface};
 use crate::textures::Image;
-use crate::track::{Track, STRUCTURE_KERB, WALL_HEIGHT, WALL_THICKNESS};
+use crate::track::{Track, STRUCTURE_KERB};
 
 pub const DT: f32 = 1.0 / 60.0;
 const GRAVITY: f32 = 18.0;
@@ -166,20 +166,21 @@ impl Car {
         let (rx, rz) = sample.right();
         let previous_lateral = (previous_x - sample.x) * rx + (previous_z - sample.z) * rz;
         let ground = track.terrain(self.x, self.z).height;
-        if self.y > ground + WALL_HEIGHT {
-            return;
-        }
         for side in [-1.0f32, 1.0] {
-            let Some(wall) = track.wall(index, side) else {
+            let Some(obstacle) = track.obstacle(index, side) else {
                 continue;
             };
+            if self.y > ground + obstacle.height {
+                continue;
+            }
+            let wall = obstacle.lateral;
             let inner = wall.abs() - BODY_HALF_WIDTH;
-            let outer = wall.abs() + WALL_THICKNESS + BODY_HALF_WIDTH;
+            let outer = wall.abs() + obstacle.thickness + BODY_HALF_WIDTH;
             let distance = lateral * side;
             if distance <= inner || distance >= outer {
                 continue;
             }
-            let from_road = previous_lateral * side < wall.abs() + WALL_THICKNESS * 0.5;
+            let from_road = previous_lateral * side < wall.abs() + obstacle.thickness * 0.5;
             let target = if from_road { inner } else { outer };
             let correction = (target - distance) * side;
             self.x += rx * correction;

@@ -233,6 +233,18 @@ const WALL_CHANCE: f32 = 0.22;
 const WALL_OFFSET: f32 = 0.8;
 pub const WALL_HEIGHT: f32 = 1.1;
 pub const WALL_THICKNESS: f32 = 0.6;
+const BARRIER_HEIGHT: f32 = 0.8;
+const BARRIER_THICKNESS: f32 = 0.3;
+const BARRIER_OFFSET: f32 = 0.3;
+const BARRIER_CURVATURE: f32 = 1.0 / 30.0;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Obstacle {
+    pub lateral: f32,
+    pub height: f32,
+    pub thickness: f32,
+    pub barrier: bool,
+}
 const RAVINE_RIVER_CHANCE: f32 = 0.5;
 const TUNNEL_CHANCE: f32 = 0.35;
 const TUNNEL_COVER: f32 = 9.0;
@@ -680,6 +692,38 @@ impl Track {
     pub fn ground_at(&self, index: usize) -> crate::art::Ground {
         let (a, b, t) = self.biomes.at(Self::distance(index));
         crate::biome::BIOMES[if t > 0.5 { b } else { a }].ground
+    }
+
+    pub fn obstacle(&self, index: usize, side: f32) -> Option<Obstacle> {
+        self.barrier(index, side)
+            .map(|lateral| Obstacle {
+                lateral,
+                height: BARRIER_HEIGHT,
+                thickness: BARRIER_THICKNESS,
+                barrier: true,
+            })
+            .or_else(|| {
+                self.wall(index, side).map(|lateral| Obstacle {
+                    lateral,
+                    height: WALL_HEIGHT,
+                    thickness: WALL_THICKNESS,
+                    barrier: false,
+                })
+            })
+    }
+
+    fn barrier(&self, index: usize, side: f32) -> Option<f32> {
+        if index < WALL_START || index + 3 >= self.samples.len() || self.is_structure(index) {
+            return None;
+        }
+        let bend = (index - 2..=index + 2)
+            .map(|near| self.samples[near].curvature)
+            .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+            .unwrap_or(0.0);
+        if bend.abs() < BARRIER_CURVATURE || side != -bend.signum() {
+            return None;
+        }
+        Some(side * (self.shoulder(index) + BARRIER_OFFSET))
     }
 
     pub fn wall(&self, index: usize, side: f32) -> Option<f32> {

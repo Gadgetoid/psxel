@@ -14,7 +14,7 @@ use crate::sprites::band_image;
 use crate::textures::{fog_band, Atlas, Image};
 use crate::track::{
     NoteKind, Track, BOUNDARY, ROAD_HALF, SAMPLE, STRUCTURE_KERB, TUNNEL_COVER_HEIGHT,
-    TUNNEL_HEIGHT, TUNNEL_ROOF_HALF, WALL_HEIGHT, WALL_THICKNESS,
+    TUNNEL_HEIGHT, TUNNEL_ROOF_HALF,
 };
 
 pub const VIEW_SAMPLES: usize = 68;
@@ -245,16 +245,25 @@ impl World {
         let sun = lighting.sun_direction;
         for index in start..end {
             for side in [-1.0f32, 1.0] {
-                let (Some(lateral_a), Some(lateral_b)) =
-                    (track.wall(index, side), track.wall(index + 1, side))
+                let (Some(first), Some(second)) =
+                    (track.obstacle(index, side), track.obstacle(index + 1, side))
                 else {
                     continue;
                 };
-                let material = tiled(&if track.ground_at(index) == Ground::Earth {
-                    art.desert_wall
+                if first.barrier != second.barrier {
+                    continue;
+                }
+                let (lateral_a, lateral_b) = (first.lateral, second.lateral);
+                let (wall_height, wall_thickness) = (first.height, first.thickness);
+                let material = if first.barrier {
+                    art.barrier
                 } else {
-                    art.stone_wall
-                });
+                    tiled(&if track.ground_at(index) == Ground::Earth {
+                        art.desert_wall
+                    } else {
+                        art.stone_wall
+                    })
+                };
                 let (a, b) = (track.sample(index), track.sample(index + 1));
                 let origin = world_to_psx(a.x, a.y, a.z);
                 renderer.set_object(origin, Mat3Fx12::IDENTITY);
@@ -285,26 +294,34 @@ impl World {
                 };
                 let (rx, rz) = a.right();
                 let facing = (rx * sun[0] + rz * sun[2]) * side;
-                let length = ((SAMPLE * STONE_TEXELS) as u8).max(1);
-                let height = (WALL_HEIGHT * STONE_TEXELS) as u8;
-                let faces = [
-                    (0.0, 0.0, WALL_HEIGHT, 0.0, -facing, height),
+                let (u0, length, v0, height, top) = if first.barrier {
                     (
-                        WALL_THICKNESS,
-                        WALL_THICKNESS,
-                        WALL_HEIGHT,
+                        material.u,
+                        material.width - 1,
+                        material.v,
+                        material.height - 1,
+                        2,
+                    )
+                } else {
+                    (
+                        0,
+                        ((SAMPLE * STONE_TEXELS) as u8).max(1),
+                        0,
+                        (wall_height * STONE_TEXELS) as u8,
+                        (wall_thickness * STONE_TEXELS) as u8,
+                    )
+                };
+                let faces = [
+                    (0.0, 0.0, wall_height, 0.0, -facing, height),
+                    (
+                        wall_thickness,
+                        wall_thickness,
+                        wall_height,
                         0.0,
                         facing,
                         height,
                     ),
-                    (
-                        0.0,
-                        WALL_THICKNESS,
-                        WALL_HEIGHT,
-                        WALL_HEIGHT,
-                        0.9,
-                        (WALL_THICKNESS * STONE_TEXELS) as u8,
-                    ),
+                    (0.0, wall_thickness, wall_height, wall_height, 0.9, top),
                 ];
                 for (offset_top, offset_bottom, top, bottom, face_light, v_span) in faces {
                     let points = [
@@ -313,7 +330,12 @@ impl World {
                         corner(&a, lateral_a, offset_bottom, bottom),
                         corner(&b, lateral_b, offset_bottom, bottom),
                     ];
-                    let uvs = [(0, 0), (length, 0), (0, v_span), (length, v_span)];
+                    let uvs = [
+                        (u0, v0),
+                        (u0.wrapping_add(length), v0),
+                        (u0, v0.wrapping_add(v_span)),
+                        (u0.wrapping_add(length), v0.wrapping_add(v_span)),
+                    ];
                     let points = points
                         .iter()
                         .zip(uvs)
@@ -1014,10 +1036,14 @@ impl World {
                 let (first, second) = (&BIOMES[a], &BIOMES[b]);
                 let variant = hash(track.seed, index as u64 / 2, 77);
                 let biome = if t > 0.5 { second } else { first };
-                let single_track = track.half_width(index) < SINGLE_TRACK_HALF
-                    && matches!(biome.road, Road::Gravel | Road::Mud);
-                let road_image = if single_track {
-                    art.road_single
+                let narrow = track.half_width(index) < SINGLE_TRACK_HALF;
+                let single_track = match biome.road {
+                    Road::Gravel | Road::Mud if narrow => Some(art.road_single),
+                    Road::Snow if narrow => Some(art.road_snow_single),
+                    _ => None,
+                };
+                let road_image = if let Some(single) = single_track {
+                    single
                 } else {
                     pick(
                         Kind::Road,
@@ -1214,7 +1240,7 @@ impl World {
                     if drop_side && matches!(prop, Prop::Spectator | Prop::FencePost) {
                         continue;
                     }
-                    if prop == Prop::FencePost && track.wall(index, side).is_some() {
+                    if prop == Prop::FencePost && track.obstacle(index, side).is_some() {
                         continue;
                     }
                     let spread = if crowded { 12.0 } else { 30.0 };

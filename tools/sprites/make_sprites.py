@@ -40,7 +40,6 @@ ROADS = [
     ("road_gravel", "gravel_road_*", dict(kind="surface", source_metres=1.6, patch_metres=0.5, tracks=0.45, detail=1.0, macro=0.05)),
     ("road_sand", "packed_red_sand_road_*", dict(kind="surface", source_metres=2.0, patch_metres=0.8, tracks=0.3, detail=0.8, macro=0.07)),
     ("road_tarmac", "tarmac_with_a_worn_centre_line_*", dict(kind="tarmac", source_metres=6.4, patch_metres=1.0, detail=0.6, macro=0.04)),
-    ("road_snow", "snow-covered_road_with_tyre_ruts_*", dict(kind="snow", source_metres=5.0, patch_metres=1.0, detail=0.5, macro=0.03)),
 ]
 
 SNOW_BASE_SOURCE = "snowy_field_*"
@@ -72,6 +71,10 @@ LATE_TEXTURES = [
     ("road_single", "single_track_dirt_road_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("verge_dirt", "grassy_dirt_*", 1, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("puddle_mud", "muddy_puddle_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("road_snow_single", "snowy_dirt_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.8, crop=(0.2, 0.0, 0.8, 1.0))),
+    ("road_snow_0", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.7)),
+    ("road_snow_1", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 1, dict(kind="direct", overlap=0.1, detail=0.7, straighten=True)),
+    ("barrier", "race_track_barriers_*", 0, dict(kind="direct", overlap=0.0, detail=0.9, crop=(0.0, 0.0, 1.0, 0.25), size=(64, 16))),
 ]
 
 LATE_ROADS = [
@@ -573,10 +576,46 @@ def surface_texture(rgb, settings, rng):
     return finish_texture(add_wheel_tracks(work, settings["tracks"]), False, settings["detail"])
 
 
+def track_columns(rgb, rows):
+    darkness = 255 - rgb[rows].astype(np.float32).mean(axis=(0, 2))
+    darkness = ndimage.uniform_filter1d(darkness, max(3, rgb.shape[1] // 24))
+    half = rgb.shape[1] // 2
+    return int(np.argmax(darkness[:half])), half + int(np.argmax(darkness[half:]))
+
+
+def straighten_tracks(rgb):
+    height, width = rgb.shape[:2]
+    band = max(4, height // 8)
+    top_left, top_right = track_columns(rgb, slice(0, band))
+    bottom_left, bottom_right = track_columns(rgb, slice(height - band, height))
+    left, right = (top_left + bottom_left) / 2, (top_right + bottom_right) / 2
+    rows = np.arange(height, dtype=np.float32)[:, None]
+    blend = rows / (height - 1)
+    source_left = top_left + (bottom_left - top_left) * blend
+    source_right = top_right + (bottom_right - top_right) * blend
+    columns = np.arange(width, dtype=np.float32)[None, :]
+    source_x = source_left + (columns - left) * (source_right - source_left) / (right - left)
+    source_y = np.broadcast_to(rows, (height, width))
+    channels = [
+        ndimage.map_coordinates(rgb[..., channel].astype(np.float32), [source_y, source_x], order=1, mode="reflect")
+        for channel in range(3)
+    ]
+    return np.stack(channels, axis=-1)
+
+
 def direct_texture(rgb, settings):
-    tile = vertically_periodic(rgb, int(rgb.shape[0] * settings["overlap"]))
+    if settings.get("straighten"):
+        rgb = straighten_tracks(rgb)
+    if "crop" in settings:
+        left, top, right, bottom = settings["crop"]
+        height, width = rgb.shape[:2]
+        rgb = rgb[int(top * height):int(bottom * height), int(left * width):int(right * width)]
+    width, height = settings.get("size", (64, 64))
+    tile = rgb.astype(np.float32)
+    if settings["overlap"] > 0:
+        tile = vertically_periodic(tile, int(tile.shape[0] * settings["overlap"]))
     image = Image.fromarray(np.clip(tile, 0, 255).astype(np.uint8))
-    work = np.asarray(image.resize((64 * WORK_SCALE, 64 * WORK_SCALE), Image.BOX), dtype=np.float32)
+    work = np.asarray(image.resize((width * WORK_SCALE, height * WORK_SCALE), Image.BOX), dtype=np.float32)
     return finish_texture(work, False, settings["detail"])
 
 
