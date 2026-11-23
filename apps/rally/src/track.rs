@@ -225,6 +225,7 @@ pub const TUNNEL_HEIGHT: f32 = 5.0;
 const RAVINE_CHANCE: f32 = 0.2;
 const RAVINE_REACH: f32 = 120.0;
 const RAVINE_FADE: f32 = 30.0;
+const RAVINE_RIM: f32 = 80.0;
 const RAVINE_RIVER_CHANCE: f32 = 0.5;
 const TUNNEL_CHANCE: f32 = 0.35;
 const TUNNEL_COVER: f32 = 9.0;
@@ -690,7 +691,8 @@ impl Track {
             ((across - ravine.half_bed) / (ravine.half_top - ravine.half_bed)).clamp(0.0, 1.0);
         let wall = wall * wall * (3.0 - 2.0 * wall);
         let floor = ravine.road_y - ravine.depth;
-        let target = floor + (ravine.road_y + 3.0 - floor) * wall.powf(0.6);
+        let target =
+            floor + (ravine.road_y + 3.0 - floor) * wall.powf(0.6) + RAVINE_RIM * wall.powi(6);
         let end = ((along.abs() - RAVINE_REACH) / RAVINE_FADE).clamp(0.0, 1.0);
         Some((target, 1.0 - end * end * (3.0 - 2.0 * end)))
     }
@@ -792,7 +794,7 @@ impl Track {
             .any(|tunnel| self.tunnel_cover(tunnel, x, z).is_some())
     }
 
-    fn tunnel_cover(&self, tunnel: &Tunnel, x: f32, z: f32) -> Option<f32> {
+    fn tunnel_cover(&self, tunnel: &Tunnel, x: f32, z: f32) -> Option<(f32, f32)> {
         let middle = self.samples[(tunnel.start + tunnel.end) / 2];
         let half_length = (tunnel.end - tunnel.start) as f32 * SAMPLE * 0.5;
         let reach = half_length + TUNNEL_SHOULDER + TUNNEL_SPREAD + 20.0;
@@ -810,12 +812,14 @@ impl Track {
         let face = (1.0 - outside / PORTAL_FACE).clamp(0.0, 1.0);
         let side = ((point.lateral.abs() - TUNNEL_SHOULDER) / TUNNEL_SPREAD).clamp(0.0, 1.0);
         let side = 1.0 - side * side * (3.0 - 2.0 * side);
-        let weight = face * side;
+        let weight = face.sqrt() * side;
         if weight <= 0.0 {
             return None;
         }
-        let road = self.ground(point.index, point.t, 0.0);
-        Some(road + TUNNEL_COVER * weight.sqrt())
+        Some((
+            self.ground(point.index, point.t, 0.0) + TUNNEL_COVER,
+            weight,
+        ))
     }
 
     fn preview_clear(&self, count: usize, target_curvature: f32) -> bool {
@@ -1166,8 +1170,9 @@ impl Track {
             }
         }
         for tunnel in &self.tunnels {
-            if let Some(cover) = self.tunnel_cover(tunnel, x, z) {
-                terrain.height = terrain.height.max(cover);
+            if let Some((cover, weight)) = self.tunnel_cover(tunnel, x, z) {
+                let raised = terrain.height + (cover - terrain.height) * weight;
+                terrain.height = terrain.height.max(raised);
             }
         }
         for ford in self.fords.iter().chain(&self.rivers) {
@@ -1735,6 +1740,9 @@ mod tests {
         track.ensure(1500);
         for index in (60..1400).step_by(37) {
             let sample = track.sample(index);
+            if track.is_structure(index) || track.tunnel_hill(sample.x, sample.z) {
+                continue;
+            }
             let terrain = track.terrain(sample.x, sample.z);
             assert!(
                 (terrain.height - sample.y).abs() < 0.05,
