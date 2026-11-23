@@ -45,3 +45,5 @@ jobs:
         run: trunk build --release
       - working-directory: web/rally
         run: trunk build --release
+      - working-directory: web/temple
+        run: trunk build --release

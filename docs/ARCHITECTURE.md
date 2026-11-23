@@ -11,6 +11,7 @@
 
 - `apps/demo`: test pattern.
 - `apps/rally`: procedural rally game built on the above.
+- `apps/temple`: jungle temple fly-through. Reuses rally's `render`, `rng` and `sprites` modules via `#[path]`; static geometry is chunked with baked per-vertex lighting and per-torch flicker; water, mist, flames and light shafts are procedural.
 
 ## Web
 

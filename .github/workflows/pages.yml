@@ -30,6 +30,8 @@ jobs:
         run: trunk build --release
       - working-directory: web/rally
         run: trunk build --release
+      - working-directory: web/temple
+        run: trunk build --release
       - run: cp -R web/index.html web/screens dist/
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

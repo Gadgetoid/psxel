@@ -6,9 +6,10 @@ The renderer models the PS1 pipeline rather than imitating its look: a fixed-poi
 
 ## Demos
 
-The GitHub Pages site builds both web targets on every push to `main`:
+The GitHub Pages site builds every web target on each push to `main`:
 
 - `rally/`: PSX Rally, an endless stage with a co-driver, five biomes, day and night, weather, fords, ravines, tunnels, bridges and twelve period liveries.
+- `temple/`: a looping fly-through of a jungle temple with a waterfall, pool and torch-lit idol chamber. Space pauses, C toggles a free camera (WASD, arrows, Q/E), M mutes.
 - `demo/`: the presenter test card.
 
 Useful URL options for the rally: `?seed=N` picks a stage, `?at=N` starts at a track index, `?stats=1` shows frame timing and location, `?webgl` forces the WebGL backend.
@@ -21,6 +22,7 @@ The toolchain is pinned in `rust-toolchain.toml`.
 cargo run --release -p rally          # native
 cargo test --workspace
 cd web/rally && trunk build --release  # web build into dist/rally
+cargo run --release -p temple -- --shots out  # temple tour screenshots
 ```
 
 ## Layout
@@ -32,7 +34,7 @@ cd web/rally && trunk build --release  # web build into dist/rally
 - `crates/psxel_gpu`: wgpu presentation.
 - `crates/psxel_spu`: SPU-ADPCM encoding and decoding.
 - `crates/psxel_engine`: windowing, input, gamepad and Web Audio.
-- `apps/rally`: the rally game. `apps/demo`: the test card.
+- `apps/rally`: the rally game. `apps/temple`: the jungle temple fly-through. `apps/demo`: the test card.
 - `assets`: converted sprites, textures and sounds.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more.

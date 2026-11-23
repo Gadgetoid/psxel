@@ -46,7 +46,7 @@ pub fn decode_wav(bytes: &[u8]) -> Option<Sound> {
 mod backend {
     use std::collections::HashMap;
 
-    use web_sys::{AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode};
+    use web_sys::{AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode, StereoPannerNode};
 
     use super::{Sound, SoundId};
 
@@ -54,6 +54,7 @@ mod backend {
         sound: SoundId,
         source: AudioBufferSourceNode,
         gain: GainNode,
+        panner: Option<StereoPannerNode>,
     }
 
     pub struct Backend {
@@ -106,15 +107,24 @@ mod backend {
             sounds: &[Sound],
             id: SoundId,
             looping: bool,
-        ) -> Option<(AudioBufferSourceNode, GainNode)> {
+        ) -> Option<(AudioBufferSourceNode, GainNode, Option<StereoPannerNode>)> {
             let buffer = self.buffer(sounds, id)?;
             let source = self.context.create_buffer_source().ok()?;
             source.set_buffer(Some(&buffer));
             source.set_loop(looping);
             let gain = self.context.create_gain().ok()?;
             source.connect_with_audio_node(&gain).ok()?;
-            gain.connect_with_audio_node(&self.master).ok()?;
-            Some((source, gain))
+            let panner = self.context.create_stereo_panner().ok();
+            match &panner {
+                Some(panner) => {
+                    gain.connect_with_audio_node(panner).ok()?;
+                    panner.connect_with_audio_node(&self.master).ok()?;
+                }
+                None => {
+                    gain.connect_with_audio_node(&self.master).ok()?;
+                }
+            }
+            Some((source, gain, panner))
         }
 
         pub fn set_loop(
@@ -124,6 +134,7 @@ mod backend {
             id: SoundId,
             volume: f32,
             rate: f32,
+            pan: f32,
         ) {
             let now = self.context.current_time();
             let restart = self
@@ -136,7 +147,7 @@ mod backend {
                     let _ =
                         web_sys::AudioScheduledSourceNode::stop_with_when(&old.source, now + 0.1);
                 }
-                let Some((source, gain)) = self.source(sounds, id, true) else {
+                let Some((source, gain, panner)) = self.source(sounds, id, true) else {
                     return;
                 };
                 gain.gain().set_value(0.0);
@@ -147,6 +158,7 @@ mod backend {
                         sound: id,
                         source,
                         gain,
+                        panner,
                     },
                 );
             }
@@ -156,11 +168,16 @@ mod backend {
                     .source
                     .playback_rate()
                     .set_target_at_time(rate.max(0.01), now, 0.03);
+                if let Some(panner) = &voice.panner {
+                    let _ = panner
+                        .pan()
+                        .set_target_at_time(pan.clamp(-1.0, 1.0), now, 0.05);
+                }
             }
         }
 
         pub fn play(&mut self, sounds: &[Sound], id: SoundId, volume: f32, rate: f32) {
-            let Some((source, gain)) = self.source(sounds, id, false) else {
+            let Some((source, gain, _)) = self.source(sounds, id, false) else {
                 return;
             };
             gain.gain().set_value(volume);
@@ -195,6 +212,7 @@ mod backend {
             _id: SoundId,
             _volume: f32,
             _rate: f32,
+            _pan: f32,
         ) {
         }
 
@@ -239,8 +257,19 @@ impl Audio {
     }
 
     pub fn set_loop(&mut self, channel: usize, sound: SoundId, volume: f32, rate: f32) {
+        self.set_loop_panned(channel, sound, volume, rate, 0.0);
+    }
+
+    pub fn set_loop_panned(
+        &mut self,
+        channel: usize,
+        sound: SoundId,
+        volume: f32,
+        rate: f32,
+        pan: f32,
+    ) {
         if let Some(backend) = &mut self.backend {
-            backend.set_loop(&self.sounds, channel, sound, volume, rate);
+            backend.set_loop(&self.sounds, channel, sound, volume, rate, pan);
         }
     }
 
