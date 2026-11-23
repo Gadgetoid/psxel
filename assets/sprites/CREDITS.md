@@ -1,38 +1,53 @@
-# Sprite and texture credits
+# Sprite and texture sources
 
-All source art is user-supplied (provided in `~/Downloads/rally/`, copied 2026-11-22). No third-party sources are used.
-
-Regenerate with `python tools/sprites/make_sprites.py <source dir>` (needs Pillow, numpy, scipy).
+All sprites and textures are CC0 (see `../LICENSE`). They are converted from source art supplied by the project author with [psx-asset-tools](../../../psx-asset-tools) (`sprites/make_sprites.py`). The source art is not shipped.
 
 Variant `_0` comes from the unsuffixed source file, `_1` from `-2`, `_2` from `-3`, `_3` from `-4`.
 
-| Output | Source files | Origin |
-| --- | --- | --- |
-| `broadleaf_0..3.png` | `summer_tree_realistic_like_a_playstation_1_billboard_sprite*.jpg` | user-supplied |
-| `autumn_0..2.png` | `autumn_tree_realistic_like_a_playstation_1_billboard_sprite*.jpg` | user-supplied |
-| `bare_0..3.png` | `half-bare_autumn_tree_realistic_like_a_playstation_1_billboa*.jpg` | user-supplied |
-| `fir_0..3.png` | `fir_tree_realistic_like_a_playstation_1_billboard_sprite_on*.jpg` | user-supplied |
-| `pine_0..3.png` | `pind_tree_realistic_like_a_playstation_1_billboard_sprite_on*.jpg` | user-supplied |
-| `snow_fir_0..3.png` | `snowy_fir_tree_realistic_like_a_playstation_1_billboard_spri*.jpg` | user-supplied |
-| `joshua_0..3.png` | `Joshua_tree_realistic_like_a_playstation_1_billboard_sprite*.jpg` | user-supplied |
-| `cactus_0..3.png` | `cactus_realistic_like_a_playstation_1_billboard_sprite_on_a*.jpg` | user-supplied |
-| `bush_0..3.png` | `shrub_realistic_like_a_playstation_1_billboard_sprite_on_a_w*.jpg` | user-supplied |
-| `scrub_0..3.png` | `dry_scrub_realistic_like_a_playstation_1_billboard_sprite_on*.jpg` | user-supplied |
-| `rock_0..3.png` | `rocks_realistic_like_a_playstation_1_billboard_sprite_on_a_w*.jpg` | user-supplied |
-| `small_rock_0..3.png` | `small_rock_realistic_like_a_playstation_1_billboard_sprite_o*.jpg` | user-supplied |
-| `snow_rock_0..3.png` | `snowy_rock_realistic_like_a_playstation_1_billboard_sprite_o*.jpg` | user-supplied |
-| `rock_texture.png` | `rocks_realistic_like_a_playstation_1_billboard_sprite_on_a_w.jpg` (interior) | user-supplied |
-| `road_gravel_0..3.png` | `gravel_road_seamless_tileable_top-down_texture_flat_even_lig*.jpg` | user-supplied |
-| `road_sand_0..3.png` | `packed_red_sand_road_seamless_tileable_top-down_texture_flat*.jpg` | user-supplied |
-| `road_tarmac_0..3.png` | `tarmac_with_a_worn_centre_line_seamless_tileable_top-down_te*.jpg` | user-supplied |
-| `road_snow_0..3.png` | `snow-covered_road_with_tyre_ruts_seamless_tileable_top-down*.jpg` (ruts), `snowy_field_*.jpg` (base) | user-supplied |
-| `ground_grass.png` | `short_grass_seamless_tileable_top-down_texture_flat_even_lig.jpg` | user-supplied |
-| `ground_wheat.png` | `golden_wheat_stubble_seamless_tileable_top-down_texture_flat.jpg` | user-supplied |
-| `ground_leaves.png` | `leaf_litter_seamless_tileable_top-down_texture_flat_even_lig.jpg` | user-supplied |
-| `ground_snow.png` | `snowy_field_seamless_tileable_top-down_texture_flat_even_lig.jpg` | user-supplied |
-| `horizon_forest.png` | `forested_hills_racing_game_skybox_realistic_playstation_era.jpg` | user-supplied |
-| `cliff_desert_0..3.png` | `horizontally_striated_red_desert_rockscliff_seamless_tileabl*.jpg` | user-supplied |
-| `cliff_desert_plain.png` | `desert_rockscliff_seamless_tileable_top-down_texture_flat_ev.jpg` | user-supplied |
-| `horizon_mesas.png` | `red_mesas_tiling_racing_game_skybox_realistic_playstation_er.jpg` | user-supplied |
-| `horizon_farmland.png` | `rolling_farmland_racing_game_skybox_realistic_playstation_er.jpg` | user-supplied |
-| `horizon_alpine.png` | `snowy_alpine_peaks_tiling_racing_game_skybox_realistic_plays.jpg` | user-supplied |
+| Output | Source pattern |
+| --- | --- |
+| `fir_*` | `douglas_fir_tree_*` |
+| `pine_*` | `scott_pine_tree_*` |
+| `snow_fir_*` | `snowy_fir_tree_*` |
+| `broadleaf_*` | `summer_tree_*` |
+| `autumn_*` | `autumn_tree_*` |
+| `bare_*` | `half-bare_autumn_tree_*` |
+| `joshua_*` | `Joshua_tree_*` |
+| `cactus_*` | `cactus_*` |
+| `bush_*` | `shrub_*` |
+| `scrub_*` | `dry_scrub_*` |
+| `rock_*`, `rock_texture` | `rocks_*` |
+| `small_rock_*` | `small_rock_*` |
+| `snow_rock_*` | `snowy_rock_*` |
+| `hay_*` | `hay_bales_*` |
+| `road_gravel_*` | `gravel_road_*` |
+| `road_sand_*` | `packed_red_sand_road_*` |
+| `road_tarmac_*` | `tarmac_with_a_worn_centre_line_*` |
+| `road_mud_*` | `muddy_road_with_tyre_ruts_*` |
+| `road_snow_*` | `snowy_tarmac_road_with_two_straight_tyre_tracks_*` |
+| `road_snow_single` | `snowy_dirt_road_with_two_straight_tyre_tracks_*` |
+| `road_single` | `single_track_dirt_road_with_grassy_middle_*` |
+| `ground_grass` | `patchy_grass_*` |
+| `ground_wheat` | `golden_wheat_stubble_*` |
+| `ground_leaves` | `leaf_litter_*` |
+| `ground_snow` | `snowy_field_*` |
+| `ground_earth` | `desert_grass_*` |
+| `ground_riverbed` | `riverbed_*` |
+| `verge_dirt` | `grassy_dirt_*` |
+| `puddle_mud` | `muddy_puddle_*` |
+| `cliff_desert_*` | `horizontally_striated_red_desert_rockscliff_*` |
+| `cliff_desert_plain` | `desert_rockscliff_*` |
+| `wall_stone` | `drystone_wall_*` |
+| `wall_tunnel` | `tunnel_wall_*` |
+| `wall_desert` | `desert_wall_*` |
+| `wall_concrete` | `weathered_conrete_*` |
+| `wall_panels` | `weathered_reinforced_conrete_*` |
+| `metal_blue` | `blue_painted_weathered_metal_*` |
+| `metal_red` | `red_painted_weathered_metal_*` |
+| `barrier` | `race_track_barriers_*` |
+| `horizon_forest` | `forested_hills_racing_game_skybox_*` |
+| `horizon_farmland` | `rolling_farmland_*` |
+| `horizon_mesas` | `red_mesas_*` |
+| `horizon_alpine` | `snowy_alpine_peaks_*` |
+
+Sounds in `../sounds` are rendered with fx-sounds and horn-synthwave by the same tools repo and are also CC0.

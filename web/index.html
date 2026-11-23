@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>psx</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #0b0b12; color: #d8d8e0; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 860px; margin: 0 auto; padding: 32px 16px 48px; }
+    h1 { font-size: 2.2rem; margin: 0 0 4px; letter-spacing: 0.04em; }
+    h1 span { color: #f0c83a; }
+    p { margin: 0 0 16px; color: #a8a8b8; }
+    .demo { display: block; text-decoration: none; color: inherit; background: #16161f; border: 1px solid #2a2a38; border-radius: 6px; overflow: hidden; margin: 24px 0; }
+    .demo:hover { border-color: #f0c83a; }
+    .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: #000; }
+    .shots img { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+    .text { padding: 16px 20px 20px; }
+    .text h2 { margin: 0 0 6px; font-size: 1.3rem; color: #fff; }
+    .text p { margin: 0; }
+    .controls { font-size: 0.9rem; color: #8a8a9a; margin-top: 10px; }
+    footer { font-size: 0.85rem; color: #6a6a7a; margin-top: 32px; }
+    a { color: #f0c83a; }
+    @media (max-width: 540px) { .shots { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>psx<span>.</span></h1>
+  <p>A PlayStation-style renderer in Rust: fixed-point GTE, ordering tables, 1 MB of VRAM with 4-bit CLUT textures and a software rasteriser that copies the original GPU's affine texturing, dithering and blend modes. Runs in the browser via WebGPU or WebGL.</p>
+
+  <a class="demo" href="rally/">
+    <div class="shots">
+      <img src="screens/title.png" alt="PSX Rally title screen" width="640" height="480">
+      <img src="screens/play.png" alt="Driving over a steel viaduct in the alpine stage" width="640" height="480">
+    </div>
+    <div class="text">
+      <h2>PSX Rally</h2>
+      <p>An endless procedurally generated rally stage with a co-driver, five evolving biomes, day and night, weather, fords, ravines, tunnels and a 1970s Mk1 Escort in twelve period liveries.</p>
+      <div class="controls">Keyboard: arrows or WASD, space for handbrake, R to reset. Touch: drag up to accelerate, sideways to steer, second finger for handbrake. Gamepad supported.</div>
+    </div>
+  </a>
+
+  <p><a href="demo/">Presenter test card</a>: the first milestone, checking VRAM upload and integer-scaled presentation.</p>
+
+  <footer>Code and documentation on GitHub. Textures, sprites and sounds are CC0.</footer>
+</main>
+</body>
+</html>

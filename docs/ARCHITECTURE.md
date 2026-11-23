@@ -24,5 +24,5 @@
 
 - `track`: procedural stage (segments, pace notes, stage characters, crossing-free generation) and a world height function blending the stage profile into 2D noise.
 - `landscape`: camera-centred heightfield grid (8 m and 16 m cells, cached) and scattered props; the road is a ribbon drawn over it.
-- `art`/`sprites`: user-supplied photo sprites and textures (assets/sprites, built by tools/sprites) packed into 8-bit pages with fogged CLUT bands.
-- `sound`: Web Audio mix of looped engine/surface/skid/weather samples (tools/sounds) and SPU-ADPCM music (`psx_spu`, tools/music).
+- `art`/`sprites`: user-supplied photo sprites and textures (assets/sprites, built by the sibling psx-asset-tools repo) packed into 4-bit pages with fogged CLUT bands.
+- `sound`: Web Audio mix of looped engine/surface/skid/weather samples (psx-asset-tools/sounds) and SPU-ADPCM music (`psx_spu`, psx-asset-tools/music).
