@@ -5,7 +5,7 @@ use crate::biome::Rgb;
 use crate::livery::{CarAtlas, BODY_FRONT, BODY_REAR};
 use crate::render::{angle, world_to_psx, Point, Renderer, Surface};
 use crate::textures::Image;
-use crate::track::{Track, STRUCTURE_KERB};
+use crate::track::{Track, STRUCTURE_KERB, WALL_HEIGHT, WALL_THICKNESS};
 
 pub const DT: f32 = 1.0 / 60.0;
 const GRAVITY: f32 = 18.0;
@@ -18,7 +18,8 @@ const CAR_BIAS: i32 = -420;
 const WHEEL_BIAS: i32 = 40;
 const BODY_HALF_WIDTH: f32 = 0.85;
 const WALL_BOUNCE: f32 = 0.3;
-const WALL_SCRUB: f32 = 0.92;
+const WALL_SCRUB: f32 = 0.3;
+const WALL_GLANCE: f32 = 0.12;
 const CRAWL_SPEED: f32 = 5.0;
 const CRAWL_DRAG_SHARE: f32 = 0.5;
 const MAX_ROLL: f32 = 0.35;
@@ -129,6 +130,69 @@ impl Car {
         self.airborne = true;
         self.index = index;
         self.previous_ground = sample.y;
+    }
+
+    fn glance(&mut self, along: (f32, f32)) {
+        let (fx, fz) = self.forward();
+        let direction = if fx * along.0 + fz * along.1 >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        let target = (along.0 * direction).atan2(along.1 * direction);
+        let mut turn = target - self.heading;
+        while turn > std::f32::consts::PI {
+            turn -= std::f32::consts::TAU;
+        }
+        while turn < -std::f32::consts::PI {
+            turn += std::f32::consts::TAU;
+        }
+        self.heading += turn * WALL_GLANCE;
+    }
+
+    fn scrub(&mut self, into: f32) {
+        let speed = self.velocity.0.hypot(self.velocity.1).max(into);
+        let keep = 1.0 - WALL_SCRUB * (into / speed.max(1.0));
+        self.velocity.0 *= keep;
+        self.velocity.1 *= keep;
+    }
+
+    fn collide_with_walls(&mut self, track: &Track, events: &mut Events) {
+        let (index, _, lateral) = track.locate(self.x, self.z, self.index);
+        let (previous_x, previous_z) =
+            (self.x - self.velocity.0 * DT, self.z - self.velocity.1 * DT);
+        let sample = track.sample(index);
+        let (rx, rz) = sample.right();
+        let previous_lateral = (previous_x - sample.x) * rx + (previous_z - sample.z) * rz;
+        let ground = track.terrain(self.x, self.z).height;
+        if self.y > ground + WALL_HEIGHT {
+            return;
+        }
+        for side in [-1.0f32, 1.0] {
+            let Some(wall) = track.wall(index, side) else {
+                continue;
+            };
+            let inner = wall.abs() - BODY_HALF_WIDTH;
+            let outer = wall.abs() + WALL_THICKNESS + BODY_HALF_WIDTH;
+            let distance = lateral * side;
+            if distance <= inner || distance >= outer {
+                continue;
+            }
+            let from_road = previous_lateral * side < wall.abs() + WALL_THICKNESS * 0.5;
+            let target = if from_road { inner } else { outer };
+            let correction = (target - distance) * side;
+            self.x += rx * correction;
+            self.z += rz * correction;
+            let normal = if from_road { side } else { -side };
+            let into = (self.velocity.0 * rx + self.velocity.1 * rz) * normal;
+            if into > 0.0 {
+                self.velocity.0 -= rx * normal * into * (1.0 + WALL_BOUNCE);
+                self.velocity.1 -= rz * normal * into * (1.0 + WALL_BOUNCE);
+                self.scrub(into);
+                self.glance(sample.forward());
+                events.impact = events.impact.max(into);
+            }
+        }
     }
 
     pub fn forward(&self) -> (f32, f32) {
@@ -329,13 +393,14 @@ impl Car {
                 if outward > 0.0 {
                     self.velocity.0 -= rx * side * outward * (1.0 + WALL_BOUNCE);
                     self.velocity.1 -= rz * side * outward * (1.0 + WALL_BOUNCE);
-                    self.velocity.0 *= WALL_SCRUB;
-                    self.velocity.1 *= WALL_SCRUB;
+                    self.scrub(outward);
+                    self.glance(track.sample(hit.road.index).forward());
                     events.impact = events.impact.max(outward);
                 }
             }
         }
 
+        self.collide_with_walls(track, &mut events);
         let (fx, fz) = self.forward();
         let (rx, rz) = self.right();
         let wheel = |forward: f32, side: f32| {

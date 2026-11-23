@@ -1317,6 +1317,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn walls_stop_the_car() {
+        let mut track = Track::new(8);
+        track.ensure(800);
+        let (index, side) = (40..700)
+            .flat_map(|index| [(index, -1.0f32), (index, 1.0)])
+            .find(|&(index, side)| {
+                (index - 3..=index + 3).all(|near| track.wall(near, side).is_some())
+            })
+            .unwrap();
+        let wall = track.wall(index, side).unwrap();
+        let sample = track.sample(index);
+        let mut car = Car::new(&track);
+        car.x = sample.x;
+        car.z = sample.z;
+        car.y = sample.y;
+        car.index = index;
+        car.heading = sample.heading + side * std::f32::consts::FRAC_PI_2;
+        let (rx, rz) = sample.right();
+        car.velocity = (rx * side * 15.0, rz * side * 15.0);
+        let controls = Controls {
+            throttle: 1.0,
+            steer: 0.0,
+            handbrake: false,
+        };
+        for _ in 0..90 {
+            car.update(controls, &mut track);
+        }
+        let (_, _, lateral) = track.locate(car.x, car.z, index);
+        assert!(lateral * side < wall.abs(), "{lateral} {wall}");
+    }
+
+    #[test]
     fn car_drives_out_of_stream() {
         let mut track = Track::new(8);
         track.ensure(800);

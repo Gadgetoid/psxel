@@ -227,6 +227,12 @@ const RAVINE_REACH: f32 = 120.0;
 const RAVINE_FADE: f32 = 30.0;
 const RAVINE_RIM: f32 = 80.0;
 const RIVERBED_MARGIN: f32 = 2.0;
+const WALL_START: usize = 40;
+const WALL_RUN: usize = 28;
+const WALL_CHANCE: f32 = 0.22;
+const WALL_OFFSET: f32 = 0.8;
+pub const WALL_HEIGHT: f32 = 1.1;
+pub const WALL_THICKNESS: f32 = 0.6;
 const RAVINE_RIVER_CHANCE: f32 = 0.5;
 const TUNNEL_CHANCE: f32 = 0.35;
 const TUNNEL_COVER: f32 = 9.0;
@@ -673,6 +679,32 @@ impl Track {
     pub fn ground_at(&self, index: usize) -> crate::art::Ground {
         let (a, b, t) = self.biomes.at(Self::distance(index));
         crate::biome::BIOMES[if t > 0.5 { b } else { a }].ground
+    }
+
+    pub fn wall(&self, index: usize, side: f32) -> Option<f32> {
+        if index < WALL_START || index + 1 >= self.samples.len() || self.is_structure(index) {
+            return None;
+        }
+        let character = self.character(index);
+        if character.ledge.abs() > 0.3 || character.cutting > 0.3 {
+            return None;
+        }
+        let ground = self.ground_at(index);
+        let chance = match ground {
+            crate::art::Ground::Grass | crate::art::Ground::Wheat => WALL_CHANCE,
+            crate::art::Ground::Leaves | crate::art::Ground::Earth => WALL_CHANCE * 0.7,
+            crate::art::Ground::Snow => return None,
+        };
+        let run = (index / WALL_RUN) as u64;
+        let key = crate::rng::hash(self.seed ^ 0x3a11, run, (side > 0.0) as u64);
+        if crate::rng::hash_float(key, 0, 0) >= chance {
+            return None;
+        }
+        let gap = (crate::rng::hash_float(key, 1, 0) * WALL_RUN as f32 * 0.4) as usize;
+        if index % WALL_RUN < gap {
+            return None;
+        }
+        Some(side * (self.shoulder(index) + WALL_OFFSET))
     }
 
     pub fn is_deck(&self, index: usize) -> bool {

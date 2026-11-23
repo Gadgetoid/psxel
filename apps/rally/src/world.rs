@@ -14,7 +14,7 @@ use crate::sprites::band_image;
 use crate::textures::{fog_band, Atlas, Image};
 use crate::track::{
     NoteKind, Track, BOUNDARY, ROAD_HALF, SAMPLE, STRUCTURE_KERB, TUNNEL_COVER_HEIGHT,
-    TUNNEL_HEIGHT, TUNNEL_ROOF_HALF,
+    TUNNEL_HEIGHT, TUNNEL_ROOF_HALF, WALL_HEIGHT, WALL_THICKNESS,
 };
 
 pub const VIEW_SAMPLES: usize = 68;
@@ -220,6 +220,7 @@ impl World {
             renderer, vram, atlas, art, track, from_index, window, lighting,
         );
         self.draw_bridges(renderer, art, track, window, lighting);
+        self.draw_walls(renderer, art, track, window, lighting);
         self.draw_tunnels(renderer, art, track, window, lighting);
         self.draw_water(renderer, art, track, camera, window, lighting);
         self.draw_props(renderer, atlas, art, track, camera, window, lighting);
@@ -230,6 +231,105 @@ impl World {
         self.landscape
             .draw_props(renderer, art, atlas, track, camera, lighting, &boulder);
         self.draw_particles(renderer, atlas, camera, lighting);
+    }
+
+    fn draw_walls(
+        &self,
+        renderer: &mut Renderer,
+        art: &Art,
+        track: &Track,
+        window: (usize, usize),
+        lighting: Lighting,
+    ) {
+        let (start, end) = window;
+        let sun = lighting.sun_direction;
+        for index in start..end {
+            for side in [-1.0f32, 1.0] {
+                let (Some(lateral_a), Some(lateral_b)) =
+                    (track.wall(index, side), track.wall(index + 1, side))
+                else {
+                    continue;
+                };
+                let material = tiled(&if track.ground_at(index) == Ground::Earth {
+                    art.desert_wall
+                } else {
+                    art.stone_wall
+                });
+                let (a, b) = (track.sample(index), track.sample(index + 1));
+                let origin = world_to_psx(a.x, a.y, a.z);
+                renderer.set_object(origin, Mat3Fx12::IDENTITY);
+                let corner = |sample: &crate::track::Sample, lateral: f32, offset: f32, up: f32| {
+                    let (rx, rz) = sample.right();
+                    let reach = lateral + side * offset;
+                    let (x, z) = (sample.x + rx * reach, sample.z + rz * reach);
+                    let base = self.landscape.height_at(track, x, z) - 0.2;
+                    let position = world_to_psx(x, base + up, z);
+                    (
+                        Vec3i16::new(
+                            (position.x - origin.x) as i16,
+                            (position.y - origin.y) as i16,
+                            (position.z - origin.z) as i16,
+                        ),
+                        x,
+                        z,
+                    )
+                };
+                let lit = |facing: f32, x: f32, z: f32| {
+                    let shade = (0.55 + facing * 0.45).clamp(0.3, 1.1);
+                    let base = [0, 1, 2].map(|c| {
+                        let light =
+                            (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * shade) / 255.0;
+                        (128.0 * light).clamp(0.0, 255.0) as u8
+                    });
+                    lighting.lit_by_beam(base, x, z)
+                };
+                let (rx, rz) = a.right();
+                let facing = (rx * sun[0] + rz * sun[2]) * side;
+                let length = ((SAMPLE * STONE_TEXELS) as u8).max(1);
+                let height = (WALL_HEIGHT * STONE_TEXELS) as u8;
+                let faces = [
+                    (0.0, 0.0, WALL_HEIGHT, 0.0, -facing, height),
+                    (
+                        WALL_THICKNESS,
+                        WALL_THICKNESS,
+                        WALL_HEIGHT,
+                        0.0,
+                        facing,
+                        height,
+                    ),
+                    (
+                        0.0,
+                        WALL_THICKNESS,
+                        WALL_HEIGHT,
+                        WALL_HEIGHT,
+                        0.9,
+                        (WALL_THICKNESS * STONE_TEXELS) as u8,
+                    ),
+                ];
+                for (offset_top, offset_bottom, top, bottom, face_light, v_span) in faces {
+                    let points = [
+                        corner(&a, lateral_a, offset_top, top),
+                        corner(&b, lateral_b, offset_top, top),
+                        corner(&a, lateral_a, offset_bottom, bottom),
+                        corner(&b, lateral_b, offset_bottom, bottom),
+                    ];
+                    let uvs = [(0, 0), (length, 0), (0, v_span), (length, v_span)];
+                    let points = points
+                        .iter()
+                        .zip(uvs)
+                        .map(|(&(position, x, z), uv)| {
+                            Point::new(position, lit(face_light, x, z), uv)
+                        })
+                        .collect::<Vec<_>>();
+                    renderer.polygon(
+                        &points,
+                        Surface::textured(material.texture),
+                        ROAD_BIAS + 10,
+                        0,
+                    );
+                }
+            }
+        }
     }
 
     fn draw_tunnels(
@@ -1112,6 +1212,9 @@ impl World {
                     let mut chooser = Rng::new(key);
                     let prop = options[chooser.pick_weighted(&weights)].0;
                     if drop_side && matches!(prop, Prop::Spectator | Prop::FencePost) {
+                        continue;
+                    }
+                    if prop == Prop::FencePost && track.wall(index, side).is_some() {
                         continue;
                     }
                     let spread = if crowded { 12.0 } else { 30.0 };
