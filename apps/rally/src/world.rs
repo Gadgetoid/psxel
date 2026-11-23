@@ -1285,6 +1285,9 @@ impl World {
                     let (fx, fz) = sample.forward();
                     let (x, z) = sample.offset(lateral);
                     let (x, z) = (x + fx * along, z + fz * along);
+                    if track.riverbed(x, z) {
+                        continue;
+                    }
                     let y = self.landscape.height_at(track, x, z);
                     let band = band_at(x, z);
                     renderer.force_otz = Some(row_depth + (lateral.abs() * 2.0) as u32);
@@ -1324,18 +1327,20 @@ impl World {
                 if let NoteKind::Turn { direction, .. } = note.kind {
                     let lateral = -direction.sign() * (BOUNDARY + 0.5);
                     let (x, z) = sample.offset(lateral);
-                    let y = self.landscape.height_at(track, x, z);
-                    let mirror = direction.sign() > 0.0;
-                    self.chevron(
-                        renderer,
-                        &atlas.chevron.in_fog_band(band_at(x, z)),
-                        track,
-                        index,
-                        mirror,
-                        [x, y, z],
-                        lit,
-                        lit,
-                    );
+                    if !track.riverbed(x, z) {
+                        let y = self.landscape.height_at(track, x, z);
+                        let mirror = direction.sign() > 0.0;
+                        self.chevron(
+                            renderer,
+                            &atlas.chevron.in_fog_band(band_at(x, z)),
+                            track,
+                            index,
+                            mirror,
+                            [x, y, z],
+                            lit,
+                            lit,
+                        );
+                    }
                 }
             }
             renderer.force_otz = Some(row_depth);

@@ -359,7 +359,7 @@ impl Landscape {
                         continue;
                     }
                 }
-                if track.structure_at(x, z, 2.0).is_some() {
+                if track.structure_at(x, z, 2.0).is_some() || track.riverbed(x, z) {
                     continue;
                 }
                 if vertex.road_index == u32::MAX {

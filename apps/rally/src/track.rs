@@ -735,7 +735,12 @@ impl Track {
     }
 
     pub fn obstacle(&self, index: usize, side: f32) -> Option<Obstacle> {
+        let flooded = |lateral: f32| {
+            let (x, z) = self.sample(index).offset(lateral);
+            self.riverbed(x, z)
+        };
         self.barrier(index, side)
+            .filter(|&lateral| !flooded(lateral))
             .map(|lateral| Obstacle {
                 lateral,
                 height: BARRIER_HEIGHT,
@@ -743,12 +748,14 @@ impl Track {
                 barrier: true,
             })
             .or_else(|| {
-                self.wall(index, side).map(|lateral| Obstacle {
-                    lateral,
-                    height: WALL_HEIGHT,
-                    thickness: WALL_THICKNESS,
-                    barrier: false,
-                })
+                self.wall(index, side)
+                    .filter(|&lateral| !flooded(lateral))
+                    .map(|lateral| Obstacle {
+                        lateral,
+                        height: WALL_HEIGHT,
+                        thickness: WALL_THICKNESS,
+                        barrier: false,
+                    })
             })
     }
 
