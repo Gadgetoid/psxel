@@ -27,10 +27,12 @@ pub struct Mix {
     pub drips: Voice,
     pub torch: Voice,
     pub cascade: Voice,
+    pub birds: Voice,
 }
 
 struct Bank {
     jungle: SoundId,
+    birds: SoundId,
     waterfall: SoundId,
     stream: SoundId,
     drone: SoundId,
@@ -49,6 +51,7 @@ impl SoundSystem {
     pub fn update(&mut self, audio: &mut Audio, mix: &Mix) {
         let bank = self.bank.get_or_insert_with(|| Bank {
             jungle: audio.load_wav(asset!("temple_jungle")),
+            birds: audio.load_wav(asset!("temple_birds")),
             waterfall: audio.load_wav(asset!("temple_waterfall")),
             stream: audio.load_wav(asset!("temple_stream")),
             drone: audio.load_wav(asset!("temple_drone")),
@@ -74,6 +77,13 @@ impl SoundSystem {
         for (channel, (sound, voice)) in channels.into_iter().enumerate() {
             audio.set_loop_panned(channel, sound, voice.volume, 1.0, voice.pan);
         }
+        audio.set_loop_panned(
+            channels.len() + 1,
+            bank.birds,
+            mix.birds.volume,
+            1.0,
+            mix.birds.pan,
+        );
         audio.set_loop_panned(
             channels.len(),
             bank.waterfall,

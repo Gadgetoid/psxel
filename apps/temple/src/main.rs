@@ -52,6 +52,7 @@ const OUTSIDE_SKY: Rgb = [128, 150, 140];
 const FOG_NEAR: (f32, f32) = (16.0, 6.0);
 const FOG_FAR: (f32, f32) = (115.0, 60.0);
 const SHORT_FOG: Rgb = [16, 22, 17];
+const ADAPTATION: f32 = 0.4;
 const SHORT_NEAR: (f32, f32) = (18.0, 4.0);
 const SHORT_FAR: (f32, f32) = (130.0, 35.0);
 const LOOK_SPEED: f32 = 1.6;
@@ -134,6 +135,31 @@ struct Temple {
     frame: u32,
     display: Display,
     short_fog: bool,
+    atmosphere: Option<Atmosphere>,
+}
+
+#[derive(Clone, Copy)]
+struct Atmosphere {
+    fog: [f32; 3],
+    sky: [f32; 3],
+    near: f32,
+    far: f32,
+    time: f32,
+}
+
+impl Atmosphere {
+    fn ease(self, target: Atmosphere) -> Atmosphere {
+        let elapsed = (target.time - self.time).max(0.0);
+        let amount = 1.0 - (-elapsed / ADAPTATION).exp();
+        let mix3 = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|c| lerp(a[c], b[c], amount));
+        Atmosphere {
+            fog: mix3(self.fog, target.fog),
+            sky: mix3(self.sky, target.sky),
+            near: lerp(self.near, target.near, amount),
+            far: lerp(self.far, target.far, amount),
+            time: target.time,
+        }
+    }
 }
 
 impl Temple {
@@ -162,6 +188,7 @@ impl Temple {
                 roll: 0.0,
             },
             frame: 0,
+            atmosphere: None,
             short_fog: !matches!(psxel_engine::option("fog").as_deref(), Some("0" | "off")),
             display: Display {
                 crt: !matches!(psxel_engine::option("crt").as_deref(), Some("0" | "off")),
@@ -211,9 +238,27 @@ impl Temple {
         } else {
             (OUTSIDE_FOG, FOG_NEAR, FOG_FAR)
         };
-        let fog = lerp_rgb(outside_fog, indoor_fog, inside);
-        let near = lerp(near_range.0, near_range.1, inside);
-        let far = lerp(far_range.0, far_range.1, inside);
+        let outside_sky = if self.short_fog {
+            SHORT_FOG
+        } else {
+            OUTSIDE_SKY
+        };
+        let to_float = |color: Rgb| color.map(|channel| channel as f32);
+        let target = Atmosphere {
+            fog: to_float(lerp_rgb(outside_fog, indoor_fog, inside)),
+            sky: to_float(lerp_rgb(outside_sky, indoor_fog, inside)),
+            near: lerp(near_range.0, near_range.1, inside),
+            far: lerp(far_range.0, far_range.1, inside),
+            time: self.time,
+        };
+        let atmosphere = match self.atmosphere {
+            Some(previous) if self.time - previous.time < 1.0 => previous.ease(target),
+            _ => target,
+        };
+        self.atmosphere = Some(atmosphere);
+        let to_rgb = |color: [f32; 3]| color.map(|channel| channel.round().clamp(0.0, 255.0) as u8);
+        let fog = to_rgb(atmosphere.fog);
+        let (near, far) = (atmosphere.near, atmosphere.far);
         set_fog_range(&mut self.renderer, near, far);
         self.renderer.begin(&camera, fog);
         let view = View {
@@ -238,12 +283,7 @@ impl Temple {
         let buffer_y = (self.frame % 2) as i32 * SCREEN_HEIGHT;
         self.frame = self.frame.wrapping_add(1);
         let env = DrawEnv::new(0, buffer_y, SCREEN_WIDTH, SCREEN_HEIGHT);
-        let outside_sky = if self.short_fog {
-            SHORT_FOG
-        } else {
-            OUTSIDE_SKY
-        };
-        let sky = lerp_rgb(outside_sky, indoor_fog, inside);
+        let sky = to_rgb(atmosphere.sky);
         draw(
             &mut self.vram,
             &env,
@@ -307,6 +347,10 @@ impl Temple {
         stream.volume *= outside;
         Mix {
             jungle: Voice::ambient(0.6 * outside),
+            birds: Voice {
+                volume: 0.55 * outside * outside,
+                pan: 0.55 * (self.time * 0.07).sin() * (self.time * 0.023 + 1.0).cos(),
+            },
             waterfall,
             stream,
             drone: Voice::ambient(0.5 * temple + 0.15 * cave),
