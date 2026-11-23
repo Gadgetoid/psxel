@@ -1554,6 +1554,18 @@ impl Track {
         }
     }
 
+    pub fn nearest_water(&self, x: f32, z: f32, reach: f32) -> Option<(f32, f32, f32)> {
+        let span = STREAM_STEP * STREAM_STEPS as f32 + reach;
+        self.fords
+            .iter()
+            .chain(&self.rivers)
+            .filter(|ford| !ford.frozen && (ford.x - x).hypot(ford.z - z) < span)
+            .flat_map(|ford| ford.path.iter())
+            .map(|point| ((point.x - x).hypot(point.z - z), point.x, point.z))
+            .filter(|&(distance, _, _)| distance < reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+    }
+
     pub fn water_at(&self, x: f32, z: f32) -> Option<f32> {
         self.fords
             .iter()

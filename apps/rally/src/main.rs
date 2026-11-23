@@ -36,6 +36,7 @@ const CHECKPOINT_BONUS: f32 = 32.0;
 const CALL_AHEAD: f32 = 70.0;
 const CALL_SECONDS: f32 = 2.6;
 const BLEND_HOLD: f32 = 300.0;
+const STREAM_REACH: f32 = 60.0;
 const LOOK_DEAD_ZONE: f32 = 0.18;
 const LOOK_SPEED: f32 = 3.0;
 const LOOK_RETURN: f32 = 2.5;
@@ -837,6 +838,17 @@ impl Game for Rally {
             self.state,
             State::Racing | State::Countdown(_) | State::TimeUp(_)
         );
+        let jungle_weight = |biome: usize| f32::from(BIOMES[biome].ground == art::Ground::Jungle);
+        let jungle = jungle_weight(a) * (1.0 - t) + jungle_weight(b) * t;
+        let stream = self
+            .track
+            .nearest_water(self.car.x, self.car.z, STREAM_REACH)
+            .map_or((0.0, 0.0), |(distance, x, z)| {
+                let closeness = 1.0 - distance / STREAM_REACH;
+                let (rx, rz) = self.car.right();
+                let pan = ((x - self.car.x) * rx + (z - self.car.z) * rz) / distance.max(1.0);
+                (closeness * closeness, pan.clamp(-1.0, 1.0) * 0.8)
+            });
         let mix = sound::Mix {
             rpm: self.engine_rpm() * 1000.0,
             throttle: self.controls.throttle,
@@ -849,6 +861,9 @@ impl Game for Rally {
             weather: Some(biome.weather),
             weather_amount,
             engine_volume: if racing { 1.0 } else { 0.5 },
+            jungle,
+            birds: jungle * daytime::phase(self.clock).daylight,
+            stream,
         };
         self.sound.update(audio, &mix);
     }

@@ -84,6 +84,7 @@ pub struct Art {
     pub jungle_floor: Image,
     pub rockface: Image,
     pub temple_stone: Image,
+    pub canopy: Image,
     pub horizon_forest: Image,
     pub horizon_farmland: Image,
     pub horizon_mesas: Image,
@@ -156,6 +157,7 @@ impl Art {
         let jungle_floor = sheet.add(vram, sprite!("jungle_floor_0"), false);
         let rockface = sheet.add(vram, sprite!("rockface_0"), false);
         let temple_stone = sheet.add(vram, sprite!("temple_stone_0"), false);
+        let canopy = sheet.add(vram, sprite!("canopy"), false);
         let cliff_desert = family!(
             sheet,
             vram,
@@ -310,6 +312,7 @@ impl Art {
             jungle_floor,
             rockface,
             temple_stone,
+            canopy,
             horizon_forest,
             horizon_farmland,
             horizon_mesas,
