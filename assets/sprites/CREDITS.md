@@ -45,6 +45,7 @@ Variant `_0` comes from the unsuffixed source file, `_1` from `-2`, `_2` from `-
 | `metal_blue` | `blue_painted_weathered_metal_*` |
 | `metal_red` | `red_painted_weathered_metal_*` |
 | `barrier` | `race_track_barriers_*` |
+| `ice` | `smooth_lake_ice_*` |
 | `horizon_forest` | `forested_hills_racing_game_skybox_*` |
 | `horizon_farmland` | `rolling_farmland_*` |
 | `horizon_mesas` | `red_mesas_*` |

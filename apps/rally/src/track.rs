@@ -39,6 +39,7 @@ pub enum NoteKind {
     Ford,
     Bridge,
     Tunnel,
+    Ice,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +58,7 @@ impl PaceNote {
             self.kind,
             NoteKind::Jump
                 | NoteKind::Ford
+                | NoteKind::Ice
                 | NoteKind::Turn {
                     severity: 0..=1,
                     ..
@@ -100,6 +102,7 @@ impl PaceNote {
             NoteKind::Ford => words.push("WATER SPLASH".into()),
             NoteKind::Bridge => words.push("OVER BRIDGE".into()),
             NoteKind::Tunnel => words.push("TUNNEL".into()),
+            NoteKind::Ice => words.push("ICE!".into()),
         }
         words.join(" ")
     }
@@ -170,6 +173,7 @@ pub struct Ford {
     pub z: f32,
     pub level: f32,
     pub crossing: usize,
+    pub frozen: bool,
     pub path: Vec<StreamPoint>,
     bounds: (f32, f32, f32, f32),
 }
@@ -187,6 +191,7 @@ pub struct Puddle {
     pub y: f32,
     pub heading: f32,
     pub radius: f32,
+    pub frozen: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -227,6 +232,7 @@ const RAVINE_REACH: f32 = 120.0;
 const RAVINE_FADE: f32 = 30.0;
 const RAVINE_RIM: f32 = 80.0;
 const RIVERBED_MARGIN: f32 = 2.0;
+const ICE_PATCH_CHANCE: f32 = 0.06;
 const WALL_START: usize = 40;
 const WALL_RUN: usize = 28;
 const WALL_CHANCE: f32 = 0.22;
@@ -798,6 +804,14 @@ impl Track {
     }
 
     pub fn surface(&self, x: f32, z: f32, y: f32) -> (f32, Option<RoadPoint>) {
+        let (height, road) = self.solid_surface(x, z, y);
+        match self.ice_at(x, z) {
+            Some(ice) if ice > height && ice < y + DECK_STEP_UP => (ice, road),
+            _ => (height, road),
+        }
+    }
+
+    fn solid_surface(&self, x: f32, z: f32, y: f32) -> (f32, Option<RoadPoint>) {
         let terrain = self.terrain(x, z);
         match self.structure_at(x, z, 0.0) {
             Some(hit)
@@ -907,6 +921,7 @@ impl Track {
                 z: ravine.z,
                 level,
                 crossing: usize::MAX,
+                frozen: self.ground_at(center) == crate::art::Ground::Snow,
                 path,
                 bounds,
             });
@@ -1227,10 +1242,15 @@ impl Track {
                     height: -FORD_DEPTH,
                     width: FORD_WIDTH,
                 });
+                let frozen = self.ground_at(center) == crate::art::Ground::Snow;
                 self.notes.push(PaceNote {
                     start: center.saturating_sub(4),
                     end: center,
-                    kind: NoteKind::Ford,
+                    kind: if frozen {
+                        NoteKind::Ice
+                    } else {
+                        NoteKind::Ford
+                    },
                     long: false,
                     tightens: false,
                     into: false,
@@ -1272,7 +1292,8 @@ impl Track {
             self.push_samples(length, 0.0);
             if ford {
                 let sample = self.samples[center];
-                let ford = self.build_stream(sample, sample.y + FORD_WATER, self.fords.len());
+                let mut ford = self.build_stream(sample, sample.y + FORD_WATER, self.fords.len());
+                ford.frozen = self.ground_at(center) == crate::art::Ground::Snow;
                 self.touch(ford.bounds, STREAM_HALF_WIDTH + STREAM_BANK + 10.0);
                 self.fords.push(ford);
             }
@@ -1491,6 +1512,7 @@ impl Track {
             z: sample.z,
             level,
             crossing,
+            frozen: false,
             path,
             bounds,
         }
@@ -1500,6 +1522,16 @@ impl Track {
         self.fords
             .iter()
             .chain(&self.rivers)
+            .filter(|ford| !ford.frozen)
+            .find_map(|ford| Self::stream_hit(ford, x, z, 0.0))
+            .map(|hit| self.settled_level(hit.surface, x, z))
+    }
+
+    pub fn ice_at(&self, x: f32, z: f32) -> Option<f32> {
+        self.fords
+            .iter()
+            .chain(&self.rivers)
+            .filter(|ford| ford.frozen)
             .find_map(|ford| Self::stream_hit(ford, x, z, 0.0))
             .map(|hit| self.settled_level(hit.surface, x, z))
     }
@@ -1521,6 +1553,7 @@ impl Track {
         let chance = match weather {
             crate::biome::Weather::Rain => 0.09,
             crate::biome::Weather::Clear => 0.015,
+            crate::biome::Weather::Snow => ICE_PATCH_CHANCE,
             _ => 0.0,
         };
         if roll >= chance {
@@ -1537,12 +1570,13 @@ impl Track {
             y: self.ground(index, 0.0, lateral),
             heading: sample.heading,
             radius,
+            frozen: weather == crate::biome::Weather::Snow,
         })
     }
 
-    pub fn puddle_at(&self, index: usize, x: f32, z: f32) -> bool {
-        (index.saturating_sub(1)..=index + 1).any(|index| {
-            self.puddle(index).is_some_and(|puddle| {
+    pub fn puddle_at(&self, index: usize, x: f32, z: f32) -> Option<Puddle> {
+        (index.saturating_sub(1)..=index + 1).find_map(|index| {
+            self.puddle(index).filter(|puddle| {
                 let (dx, dz) = (x - puddle.x, z - puddle.z);
                 let (sin, cos) = puddle.heading.sin_cos();
                 let along = (dx * sin + dz * cos) / 1.4;
@@ -1784,7 +1818,12 @@ mod tests {
             let road = track.terrain(ford.x, ford.z).road.unwrap();
             let road_y = track.ground(road.index, road.t, 0.0);
             assert!(ford.level > road_y + 0.2);
-            assert_eq!(track.water_at(ford.x, ford.z), Some(ford.level));
+            let surface = if ford.frozen {
+                track.ice_at(ford.x, ford.z)
+            } else {
+                track.water_at(ford.x, ford.z)
+            };
+            assert_eq!(surface, Some(ford.level));
             assert!(ford.path.len() > 4);
             for point in ford.path.iter().skip(ford.crossing + 3) {
                 let bed = track.terrain(point.x, point.z).height;
@@ -1799,7 +1838,8 @@ mod tests {
             assert!(track
                 .notes
                 .iter()
-                .any(|note| note.kind == NoteKind::Ford && note.end <= road.index + 1));
+                .any(|note| matches!(note.kind, NoteKind::Ford | NoteKind::Ice)
+                    && note.end <= road.index + 1));
         }
     }
 
@@ -1814,7 +1854,7 @@ mod tests {
         for (index, puddle) in puddles {
             let (_, _, lateral) = track.locate(puddle.x, puddle.z, index);
             assert!(lateral.abs() <= track.half_width(index) + 0.01);
-            assert!(track.puddle_at(index, puddle.x, puddle.z));
+            assert!(track.puddle_at(index, puddle.x, puddle.z).is_some());
         }
     }
 

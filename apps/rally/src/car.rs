@@ -21,6 +21,7 @@ const WALL_BOUNCE: f32 = 0.3;
 const WALL_SCRUB: f32 = 0.3;
 const WALL_GLANCE: f32 = 0.12;
 const MAX_CLIMB: f32 = 8.0;
+const ICE_GRIP: f32 = 0.35;
 const CRAWL_SPEED: f32 = 5.0;
 const CRAWL_DRAG_SHARE: f32 = 0.5;
 const MAX_ROLL: f32 = 0.35;
@@ -244,7 +245,17 @@ impl Car {
             .water_at(self.x, self.z)
             .map(|level| (level - self.y).max(0.0))
             .unwrap_or(0.0);
-        let puddle = self.ground == Ground::Road && track.puddle_at(road_index, self.x, self.z);
+        let puddle = if self.ground == Ground::Road {
+            track.puddle_at(road_index, self.x, self.z)
+        } else {
+            None
+        };
+        let icy = !self.airborne
+            && (puddle.is_some_and(|puddle| puddle.frozen)
+                || track
+                    .ice_at(self.x, self.z)
+                    .is_some_and(|level| (level - self.y).abs() < 0.5));
+        let puddle = puddle.is_some_and(|puddle| !puddle.frozen);
         let wet = self.water_depth > 0.05 || (puddle && !self.airborne);
         if wet && !self.wet {
             let speed = self.velocity.0.hypot(self.velocity.1);
@@ -256,7 +267,13 @@ impl Car {
                 };
         }
         self.wet = wet;
-        let wet_grip = if wet { 0.75 } else { 1.0 };
+        let wet_grip = if icy {
+            ICE_GRIP
+        } else if wet {
+            0.75
+        } else {
+            1.0
+        };
         let (grip, turn_grip) = match self.ground {
             Ground::Road => (biome_grip, biome_grip),
             Ground::Shoulder => (

@@ -73,6 +73,7 @@ pub struct Art {
     pub puddle_mud: Image,
     pub road_snow_single: Image,
     pub barrier: Image,
+    pub ice: Image,
     pub rock_texture: Image,
     pub horizon_forest: Image,
     pub horizon_farmland: Image,
@@ -132,6 +133,7 @@ impl Art {
         let puddle_mud = sheet.add(vram, sprite!("puddle_mud"), false);
         let road_snow_single = sheet.add(vram, sprite!("road_snow_single"), false);
         let barrier = sheet.add(vram, sprite!("barrier"), false);
+        let ice = sheet.add(vram, sprite!("ice"), false);
         let rock_texture = sheet.add(vram, sprite!("rock_texture"), false);
         let cliff_desert = family!(
             sheet,
@@ -253,6 +255,7 @@ impl Art {
             puddle_mud,
             road_snow_single,
             barrier,
+            ice,
             rock_texture,
             horizon_forest,
             horizon_farmland,

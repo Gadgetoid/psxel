@@ -28,6 +28,8 @@ const WATER_BIAS: i32 = -250;
 const BEAM_STRENGTH: f32 = 0.5;
 const SINGLE_TRACK_HALF: f32 = 3.7;
 const PUDDLE_TEXELS: f32 = 16.0;
+const ICE_TEXELS: f32 = 12.0;
+const ICE_SHADE: [f32; 3] = [0.62, 0.78, 1.0];
 const TUNNEL_DARK: f32 = 0.22;
 const PORTAL_HALF: f32 = TUNNEL_ROOF_HALF;
 const PORTAL_TOP: f32 = TUNNEL_COVER_HEIGHT + 1.0;
@@ -695,6 +697,12 @@ impl World {
         let shine = lerp_rgb(lighting.sky_horizon, lighting.sky_top, 0.3);
         let mud = tiled(&art.puddle_mud);
         let mud_surface = Surface::textured(mud.texture).blended(BlendMode::Half);
+        let ice = tiled(&art.ice);
+        let ice_surface = Surface::textured(ice.texture);
+        let ice_tint = [0, 1, 2].map(|c| {
+            let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * 0.9) / 255.0;
+            (128.0 * light * ICE_SHADE[c]).clamp(0.0, 255.0) as u8
+        });
         let mud_tint = scale_rgb(shine, 0.8);
         let puddle_uv = |x: f32, z: f32| {
             (
@@ -711,6 +719,11 @@ impl World {
                 world_to_psx(puddle.x, puddle.y + 0.03, puddle.z),
                 Mat3Fx12::IDENTITY,
             );
+            let (look, tint) = if puddle.frozen {
+                (ice_surface, ice_tint)
+            } else {
+                (mud_surface, mud_tint)
+            };
             let (sin, cos) = puddle.heading.sin_cos();
             let rim = |step: usize| {
                 let angle = step as f32 / 8.0 * std::f32::consts::TAU;
@@ -720,22 +733,17 @@ impl World {
                 let z = cos * along - sin * across;
                 Point::new(
                     Vec3i16::new(units(x) as i16, 0, units(z) as i16),
-                    lighting.lit_by_beam(mud_tint, puddle.x + x, puddle.z + z),
+                    lighting.lit_by_beam(tint, puddle.x + x, puddle.z + z),
                     puddle_uv(x, z),
                 )
             };
             let centre = Point::new(
                 Vec3i16::new(0, 0, 0),
-                lighting.lit_by_beam(mud_tint, puddle.x, puddle.z),
+                lighting.lit_by_beam(tint, puddle.x, puddle.z),
                 puddle_uv(0.0, 0.0),
             );
             for step in 0..8 {
-                renderer.polygon(
-                    &[centre, rim(step + 1), rim(step)],
-                    mud_surface,
-                    WATER_BIAS,
-                    0,
-                );
+                renderer.polygon(&[centre, rim(step + 1), rim(step)], look, WATER_BIAS, 0);
             }
         }
 
@@ -763,7 +771,7 @@ impl World {
                             -units(level - ford.level) as i16,
                             units(z - ford.z) as i16,
                         ),
-                        lighting.lit_by_beam(stream, x, z),
+                        lighting.lit_by_beam(if ford.frozen { ice_tint } else { stream }, x, z),
                         (0, 0),
                     )
                 })
@@ -771,9 +779,23 @@ impl World {
             for index in 1..path.len() {
                 let (a, b) = (edges(index - 1), edges(index));
                 let crossing = index.abs_diff(ford.crossing) <= 1;
+                let mut quad = [a[0], a[1], b[0], b[1]];
+                let look = if ford.frozen {
+                    let (from, to) = (path[index - 1], path[index]);
+                    let along =
+                        ((to.x - from.x).hypot(to.z - from.z) * ICE_TEXELS).min(255.0) as u8;
+                    let across = ((from.width + 1.5) * 2.0 * ICE_TEXELS).min(255.0) as u8;
+                    quad[0].uv = (0, 0);
+                    quad[1].uv = (across, 0);
+                    quad[2].uv = (0, along);
+                    quad[3].uv = (across, along);
+                    ice_surface
+                } else {
+                    surface
+                };
                 renderer.polygon(
-                    &[a[0], a[1], b[0], b[1]],
-                    surface,
+                    &quad,
+                    look,
                     if crossing { WATER_BIAS } else { STREAM_BIAS },
                     0,
                 );
