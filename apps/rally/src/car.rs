@@ -20,6 +20,7 @@ const BODY_HALF_WIDTH: f32 = 0.85;
 const WALL_BOUNCE: f32 = 0.3;
 const WALL_SCRUB: f32 = 0.3;
 const WALL_GLANCE: f32 = 0.12;
+const MAX_CLIMB: f32 = 8.0;
 const CRAWL_SPEED: f32 = 5.0;
 const CRAWL_DRAG_SHARE: f32 = 0.5;
 const MAX_ROLL: f32 = 0.35;
@@ -435,7 +436,7 @@ impl Car {
                 self.heave_velocity += (-self.vertical_speed * 0.18).min(2.5);
                 self.y = ground;
                 self.airborne = false;
-                self.vertical_speed = (ground - self.previous_ground) / DT;
+                self.vertical_speed = ((ground - self.previous_ground) / DT).min(MAX_CLIMB);
             }
         } else {
             let following = (ground - self.y) / DT;
@@ -444,7 +445,7 @@ impl Car {
                 self.vertical_speed -= GRAVITY * DT;
                 self.y += self.vertical_speed * DT;
             } else {
-                let following = following.clamp(-30.0, 30.0);
+                let following = following.clamp(-30.0, MAX_CLIMB);
                 let jolt = following - self.vertical_speed;
                 self.heave_velocity += (-jolt * 0.05).clamp(-0.6, 0.6);
                 self.vertical_speed = following;
@@ -1573,6 +1574,67 @@ mod tests {
             let road = track.terrain(car.x, car.z).road.unwrap();
             assert!(road.distance < 0.5);
         }
+    }
+
+    fn drive_over(track: &mut Track, start: usize, watch: (usize, usize)) -> (usize, f32) {
+        let mut car = Car::new(track);
+        let sample = track.sample(start);
+        car.x = sample.x;
+        car.z = sample.z;
+        car.y = sample.y;
+        car.heading = sample.heading;
+        car.index = start;
+        car.velocity = (sample.heading.sin() * 30.0, sample.heading.cos() * 30.0);
+        let (mut airborne, mut lift) = (0, 0.0f32);
+        for _ in 0..400 {
+            let target = track.sample(car.index + 5);
+            let mut error = (target.x - car.x).atan2(target.z - car.z) - car.heading;
+            while error > std::f32::consts::PI {
+                error -= std::f32::consts::TAU;
+            }
+            while error < -std::f32::consts::PI {
+                error += std::f32::consts::TAU;
+            }
+            let controls = Controls {
+                throttle: ((30.0 - car.speed()) * 0.3).clamp(-1.0, 1.0),
+                steer: (error * 3.0).clamp(-1.0, 1.0),
+                handbrake: false,
+            };
+            car.update(controls, track);
+            let watching = (watch.0..=watch.1).contains(&car.index);
+            if watching && car.airborne {
+                airborne += 1;
+            }
+            if watching {
+                lift = lift.max(car.vertical_speed);
+            }
+            if car.index > watch.1 {
+                break;
+            }
+        }
+        (airborne, lift)
+    }
+
+    #[test]
+    fn bridges_do_not_launch_the_car() {
+        let mut checked = 0;
+        for seed in 0..30u64 {
+            let mut track = Track::new(seed);
+            track.ensure(1200);
+            let Some(deck) = (60..1100).find(|&index| track.is_deck(index)) else {
+                continue;
+            };
+            let end = (deck..deck + 40)
+                .find(|&index| !track.is_deck(index))
+                .unwrap_or(deck);
+            let (airborne, lift) = drive_over(&mut track, deck - 20, (deck - 2, end + 2));
+            assert!(
+                airborne < 20 && lift < 4.0,
+                "seed {seed} deck {deck}: airborne {airborne} lift {lift}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 3, "{checked}");
     }
 
     #[test]

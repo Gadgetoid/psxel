@@ -250,6 +250,7 @@ const BRIDGE_RAMP: f32 = 42.0;
 const DECK_REACH: f32 = 18.0;
 const DECK_RISE: f32 = 3.0;
 const DECK_STEP_UP: f32 = 1.2;
+const DECK_BLEND: f32 = 1.0;
 const CROSSING_ARC: usize = 40;
 
 const FORD_DEPTH: f32 = 1.2;
@@ -726,7 +727,8 @@ impl Track {
         match self.structure_at(x, z, 0.0) {
             Some(hit)
                 if hit.height < y + DECK_STEP_UP
-                    && (hit.height > terrain.height || terrain.height > y + DECK_STEP_UP) =>
+                    && (hit.height > terrain.height - DECK_BLEND
+                        || terrain.height > y + DECK_STEP_UP) =>
             {
                 (hit.height, Some(hit.road))
             }
@@ -1255,8 +1257,13 @@ impl Track {
 
     pub fn terrain(&self, x: f32, z: f32) -> Terrain {
         let mut terrain = self.terrain_raw(x, z);
+        let road_guard = terrain.road.map_or(1.0, |road| {
+            let half = self.half_width(road.index);
+            ((road.distance - half) / (self.shoulder(road.index) - half)).clamp(0.0, 1.0)
+        });
         for ravine in &self.ravines {
             if let Some((target, weight)) = Self::ravine_profile(ravine, x, z) {
+                let weight = weight * road_guard;
                 terrain.height += (terrain.height.min(target) - terrain.height) * weight;
             }
         }
@@ -1509,8 +1516,14 @@ impl Track {
             total += weight;
         }
         let far = self.far_height(x, z);
+        let blended = if total > 0.0 { weighted / total } else { far };
+        let half = self.half_width(nearest.index);
+        let own = ((nearest.lateral.abs() - half) / (self.shoulder(nearest.index) - half))
+            .clamp(0.0, 1.0);
+        let own = own * own * (3.0 - 2.0 * own);
+        let on_road = self.profile_height(&nearest, x, z);
         Terrain {
-            height: if total > 0.0 { weighted / total } else { far },
+            height: on_road + (blended - on_road) * own,
             road: Some(nearest),
         }
     }
