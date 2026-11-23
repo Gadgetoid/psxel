@@ -37,6 +37,6 @@ cd web/rally && trunk build --release  # web build into dist/rally
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more.
 
-## Assets
+## Licence
 
-Everything in `assets/` is CC0 (see [assets/LICENSE](assets/LICENSE)). The assets are produced from source art and synth patches by the separate psx-asset-tools repository; only the converted results live here.
+The code is MIT (see [LICENSE](LICENSE)). Everything in `assets/` is CC0 (see [assets/LICENSE](assets/LICENSE)). The assets are produced from source art and synth patches by the separate psx-asset-tools repository; only the converted results live here.
