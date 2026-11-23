@@ -34,12 +34,15 @@ const DRIFT_ANGLE: f32 = 0.7;
 const POWER_DRIFT_SLIP: f32 = 0.3;
 const POWER_SLIDE_GRIP: f32 = 0.5;
 const POWER_SLIDE_THROTTLE: f32 = 0.2;
-const OVERSTEER: f32 = 2.0;
-const RECOVERY_PUSH: f32 = 0.35;
-const SPIN_ANGLE: f32 = 1.2;
-const DRIFT_RESPONSE: f32 = 5.0;
+const DRIFT_RESPONSE: f32 = 6.0;
+const DRIFT_HOLD: f32 = 0.52;
+const DRIFT_STEER: f32 = 0.36;
+const DRIFT_EXIT: f32 = 0.15;
+const DRIFT_GAIN: f32 = 3.0;
+const POWER_OVERSTEER_SPEED: f32 = 12.0;
+const POWER_OVERSTEER_SLIP: f32 = 0.2;
 const DRIFT_CARRY: f32 = 0.6;
-const DRIFT_RELEASE_SLIP: f32 = 0.1;
+const DRIFT_RELEASE_SLIP: f32 = 0.18;
 const CRAWL_SPEED: f32 = 5.0;
 const CRAWL_DRAG_SHARE: f32 = 0.5;
 const MAX_ROLL: f32 = 0.35;
@@ -97,6 +100,7 @@ pub struct Car {
     last_throttle: f32,
     pub water_depth: f32,
     drifting: bool,
+    course: f32,
     pub wet: bool,
 }
 
@@ -131,6 +135,7 @@ impl Car {
             last_throttle: 0.0,
             water_depth: 0.0,
             drifting: false,
+            course: 0.0,
             wet: false,
         }
     }
@@ -404,6 +409,23 @@ impl Car {
             if slip < DRIFT_RELEASE_SLIP || forward_speed < 6.0 {
                 self.drifting = false;
             }
+            let course = self.velocity.0.atan2(self.velocity.1);
+            let mut turn = course - self.course;
+            while turn > std::f32::consts::PI {
+                turn -= std::f32::consts::TAU;
+            }
+            while turn < -std::f32::consts::PI {
+                turn += std::f32::consts::TAU;
+            }
+            let course_rate = (turn / DT).clamp(-3.0, 3.0);
+            self.course = course;
+            if controls.throttle > 0.8
+                && self.steer.abs() > 0.9
+                && forward_speed > POWER_OVERSTEER_SPEED
+                && slip > POWER_OVERSTEER_SLIP
+            {
+                self.drifting = true;
+            }
             let power_drift = !controls.handbrake
                 && self.drifting
                 && slip > POWER_DRIFT_SLIP
@@ -411,14 +433,9 @@ impl Car {
                 && forward_speed > 6.0;
             if power_drift {
                 let away = -lateral_speed.signum();
-                let recovering = self.yaw_rate * away < 0.0;
-                let push = OVERSTEER
-                    * if recovering { RECOVERY_PUSH } else { 1.0 }
-                    * controls.throttle
-                    * (slip / DRIFT_ANGLE).min(1.0)
-                    * (1.0 - (slip - SPIN_ANGLE).max(0.0));
-                let limit = grip_limit * HANDBRAKE_LIMIT;
-                target_yaw = geometric_yaw.clamp(-limit, limit) + away * push.max(0.0);
+                let into = (self.steer * away).clamp(-1.0, 1.0);
+                let wanted = (DRIFT_HOLD + DRIFT_STEER * into).max(DRIFT_EXIT);
+                target_yaw = course_rate + away * DRIFT_GAIN * (wanted - slip);
                 yaw_response = (DRIFT_RESPONSE * DT).min(1.0);
             }
             if controls.handbrake && forward_speed.abs() > 4.0 {

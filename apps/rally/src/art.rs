@@ -113,7 +113,15 @@ impl Art {
             "road_sand_2",
             "road_sand_3"
         );
-        let snow_road = family!(sheet, vram, false, "road_snow_0", "road_snow_1");
+        let snow_road = family!(
+            sheet,
+            vram,
+            false,
+            "road_snow_0",
+            "road_snow_1",
+            "road_snow_2",
+            "road_snow_3"
+        );
         let mud = family!(sheet, vram, false, "road_mud_0", "road_mud_1");
         let grass = sheet.add(vram, sprite!("ground_grass"), false);
         let wheat = sheet.add(vram, sprite!("ground_wheat"), false);
