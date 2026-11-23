@@ -838,6 +838,8 @@ impl Game for Rally {
             self.state,
             State::Racing | State::Countdown(_) | State::TimeUp(_)
         );
+        let jungle_weight = |biome: usize| f32::from(BIOMES[biome].ground == art::Ground::Jungle);
+        let jungle = jungle_weight(a) * (1.0 - t) + jungle_weight(b) * t;
         let stream = self
             .track
             .nearest_water(self.car.x, self.car.z, STREAM_REACH)
@@ -859,6 +861,8 @@ impl Game for Rally {
             weather: Some(biome.weather),
             weather_amount,
             engine_volume: if racing { 1.0 } else { 0.5 },
+            jungle,
+            birds: jungle * daytime::phase(self.clock).daylight,
             stream,
         };
         self.sound.update(audio, &mix);
@@ -1364,6 +1368,64 @@ mod tests {
         }
         let (_, _, lateral) = track.locate(car.x, car.z, index);
         assert!(lateral * side < wall.abs(), "{lateral} {wall}");
+    }
+
+    #[test]
+    fn tree_corridors_are_solid() {
+        let mut track = Track::new(3);
+        track.ensure(3000);
+        let index = (40..2900)
+            .find(|&index| (index - 3..=index + 3).all(|near| track.treeline(near, 1.0).is_some()))
+            .unwrap();
+        for side in [-1.0f32, 1.0] {
+            let wall = track.treeline(index, side).unwrap();
+            let sample = track.sample(index);
+            let mut car = Car::new(&track);
+            car.x = sample.x;
+            car.z = sample.z;
+            car.y = sample.y;
+            car.index = index;
+            car.heading = sample.heading + side * std::f32::consts::FRAC_PI_2;
+            let (rx, rz) = sample.right();
+            car.velocity = (rx * side * 25.0, rz * side * 25.0);
+            let controls = Controls {
+                throttle: 1.0,
+                steer: 0.0,
+                handbrake: false,
+            };
+            for _ in 0..120 {
+                car.update(controls, &mut track);
+            }
+            let (_, _, lateral) = track.locate(car.x, car.z, index);
+            assert!(lateral * side < wall.abs(), "{side} {lateral} {wall}");
+        }
+        let start = (40..2900)
+            .find(|&index| track.treeline(index, 1.0).is_some())
+            .unwrap();
+        let approach = track.sample(start - 4);
+        let lateral = track.treeline(start, 1.0).unwrap() + 4.0;
+        let (x, z) = approach.offset(lateral);
+        let mut car = Car::new(&track);
+        car.x = x;
+        car.z = z;
+        car.y = track.terrain(x, z).height;
+        car.index = start - 4;
+        car.heading = approach.heading;
+        let (fx, fz) = approach.forward();
+        car.velocity = (fx * 20.0, fz * 20.0);
+        let controls = Controls {
+            throttle: 1.0,
+            steer: 0.0,
+            handbrake: false,
+        };
+        for _ in 0..120 {
+            car.update(controls, &mut track);
+            let (index, _, lateral) = track.locate(car.x, car.z, car.index);
+            assert!(
+                !track.in_forest(index, lateral),
+                "entered forest at {index} {lateral}"
+            );
+        }
     }
 
     #[test]

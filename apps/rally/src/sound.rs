@@ -16,7 +16,11 @@ const SKID_LOOSE_CHANNEL: usize = 20;
 const SKID_TARMAC_CHANNEL: usize = 21;
 const WIND_CHANNEL: usize = 22;
 const RAIN_CHANNEL: usize = 23;
-const STREAM_CHANNEL: usize = 24;
+const JUNGLE_CHANNEL: usize = 24;
+const BIRDS_CHANNEL: usize = 25;
+const STREAM_CHANNEL: usize = 26;
+const JUNGLE_VOLUME: f32 = 0.4;
+const BIRDS_VOLUME: f32 = 0.3;
 const STREAM_VOLUME: f32 = 0.5;
 const MUSIC_CHANNEL: usize = 30;
 const MUSIC_VOLUME: f32 = 0.35;
@@ -61,6 +65,8 @@ pub struct Mix {
     pub weather: Option<Weather>,
     pub weather_amount: f32,
     pub engine_volume: f32,
+    pub jungle: f32,
+    pub birds: f32,
     pub stream: (f32, f32),
 }
 
@@ -71,6 +77,8 @@ struct Bank {
     skid_tarmac: SoundId,
     wind: SoundId,
     rain: SoundId,
+    jungle: SoundId,
+    birds: SoundId,
     stream: SoundId,
     thud: SoundId,
     pop: SoundId,
@@ -127,6 +135,8 @@ impl SoundSystem {
             skid_tarmac: audio.load_wav(asset!("rally_skid_tarmac")),
             wind: audio.load_wav(asset!("rally_wind")),
             rain: audio.load_wav(asset!("amb_rain")),
+            jungle: audio.load_wav(asset!("temple_jungle")),
+            birds: audio.load_wav(asset!("temple_birds")),
             stream: audio.load_wav(asset!("temple_stream")),
             thud: audio.load_wav(asset!("rally_thud")),
             pop: audio.load_wav(asset!("rally_pop")),
@@ -248,6 +258,8 @@ impl SoundSystem {
             0.0
         };
         audio.set_loop(RAIN_CHANNEL, bank.rain, rain, 1.0);
+        audio.set_loop(JUNGLE_CHANNEL, bank.jungle, mix.jungle * JUNGLE_VOLUME, 1.0);
+        audio.set_loop(BIRDS_CHANNEL, bank.birds, mix.birds * BIRDS_VOLUME, 1.0);
         audio.set_loop_panned(
             STREAM_CHANNEL,
             bank.stream,

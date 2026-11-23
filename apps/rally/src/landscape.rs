@@ -544,11 +544,13 @@ impl Landscape {
                     continue;
                 }
                 let vertex = self.coarse(track, ix, iz);
-                if vertex.road_index == u32::MAX || vertex.road_distance < 3.0 * LATTICE {
+                if vertex.road_index == u32::MAX || vertex.road_distance < 5.0 * LATTICE {
                     let Some(road) = track.terrain(x, z).road else {
                         continue;
                     };
-                    if road.distance < track.shoulder(road.index) + 3.0 {
+                    if road.distance < track.shoulder(road.index) + 3.0
+                        || track.in_forest(road.index, road.lateral)
+                    {
                         continue;
                     }
                 }
@@ -642,6 +644,7 @@ pub fn prop_sprite(art: &Art, atlas: &Atlas, prop: Prop, key: u64) -> Option<(Im
         Prop::Pine => (pick(&art.pine), 5.5, 11.0),
         Prop::SnowFir => (pick(&art.snow_fir), 4.5, 9.0),
         Prop::Broadleaf => (pick(&art.broadleaf), 7.0, 14.0),
+        Prop::Kapok => (pick(&art.kapok), 9.0, 18.0),
         Prop::AutumnTree => (pick(&art.autumn), 7.0, 14.0),
         Prop::BareTree => (pick(&art.bare), 7.0, 14.0),
         Prop::Joshua => (pick(&art.joshua), 4.0, 8.0),

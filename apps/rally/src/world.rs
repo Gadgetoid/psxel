@@ -28,6 +28,22 @@ const SIGN_MOUNT: f32 = 1.5;
 const SIGN_POST: f32 = 0.16;
 const SIGN_SETBACK: f32 = 0.8;
 const ROOF_CLEARANCE: f32 = 0.3;
+const TREELINE_SINK: f32 = 0.6;
+const TREELINE_LOW: f32 = 7.0;
+const TREELINE_HIGH: f32 = 12.0;
+const TREELINE_TEXELS: usize = 16;
+const TREELINE_REPEAT: usize = 4;
+const TREELINE_FLOOR: f32 = 0.35;
+const CANOPY_GAP: f32 = 0.35;
+const CANOPY_CLOSE: f32 = 0.55;
+const CANOPY_REACH: f32 = 5.5;
+const CANOPY_DROOP: f32 = 1.5;
+const SHAFT_CHANCE: f32 = 0.12;
+const SHAFT_STRENGTH: f32 = 0.35;
+const SHAFT_TOP_WIDTH: f32 = 0.8;
+const SHAFT_BOTTOM_WIDTH: f32 = 1.6;
+const TREELINE_VINES: f32 = 0.45;
+const VINE_HEIGHT: f32 = 4.0;
 const PRECIPITATION_DROPS: usize = 240;
 const PRECIPITATION_RADIUS: f32 = 24.0;
 const GROUND_BIAS: i32 = 160;
@@ -230,6 +246,7 @@ impl World {
         );
         self.draw_bridges(renderer, art, track, window, lighting);
         self.draw_walls(renderer, art, track, camera, window, lighting);
+        self.draw_treeline(renderer, vram, atlas, art, track, camera, window, lighting);
         self.draw_tunnels(renderer, art, track, window, lighting);
         self.draw_water(renderer, art, track, camera, window, lighting);
         self.draw_props(renderer, atlas, art, track, camera, window, lighting);
@@ -260,7 +277,7 @@ impl World {
                 else {
                     continue;
                 };
-                if first.barrier != second.barrier {
+                if first.barrier != second.barrier || first.trees || second.trees {
                     continue;
                 }
                 let (lateral_a, lateral_b) = (first.lateral, second.lateral);
@@ -394,7 +411,9 @@ impl World {
                 let continues = |other: Option<usize>| {
                     other
                         .and_then(|other| track.obstacle(other, side))
-                        .is_some_and(|obstacle| obstacle.barrier == first.barrier)
+                        .is_some_and(|obstacle| {
+                            !obstacle.trees && obstacle.barrier == first.barrier
+                        })
                 };
                 let caps = [
                     (&a, lateral_a, -1.0, continues(index.checked_sub(1))),
@@ -438,6 +457,287 @@ impl World {
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_treeline(
+        &self,
+        renderer: &mut Renderer,
+        vram: &Vram,
+        atlas: &Atlas,
+        art: &Art,
+        track: &Track,
+        camera: &Camera,
+        window: (usize, usize),
+        lighting: Lighting,
+    ) {
+        let (start, end) = window;
+        let tint = fog_tint_from(atlas.average(vram, &art.treeline[0]), lighting.fog);
+        let right = (camera.yaw.cos(), -camera.yaw.sin());
+        let lit = |shade: f32, x: f32, z: f32| {
+            let base = [0, 1, 2].map(|c| {
+                let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * 0.6) / 255.0;
+                (128.0 * light * shade).clamp(0.0, 255.0) as u8
+            });
+            lighting.lit_by_beam(base, x, z)
+        };
+        for index in start..end {
+            let walled = [-1.0f32, 1.0].map(|side| {
+                track
+                    .treeline(index, side)
+                    .zip(track.treeline(index + 1, side))
+            });
+            let canopy = |side: f32| {
+                value_noise(track.seed ^ 0xca70 ^ side as i64 as u64, index as f32 / 7.0)
+            };
+            let closed = walled.iter().all(|walled| walled.is_some())
+                && [-1.0f32, 1.0]
+                    .iter()
+                    .all(|&side| canopy(side) > CANOPY_CLOSE);
+            let mut tops: Vec<(f32, f32, f32)> = Vec::new();
+            for (side, walled) in [-1.0f32, 1.0].into_iter().zip(walled) {
+                let Some((lateral_a, lateral_b)) = walled else {
+                    continue;
+                };
+                let key = hash(track.seed ^ 0x7ee5, index as u64, side as i64 as u64);
+                let edge = |index: usize, lateral: f32| {
+                    let sample = track.sample(index);
+                    let (x, z) = sample.offset(lateral);
+                    let ground = self.landscape.height_at(track, x, z) - TREELINE_SINK;
+                    let height = TREELINE_LOW
+                        + (TREELINE_HIGH - TREELINE_LOW)
+                            * value_noise(
+                                track.seed ^ 0x7e11 ^ side as i64 as u64,
+                                index as f32 / 2.3,
+                            );
+                    (x, ground, z, height)
+                };
+                let (a, b) = (edge(index, lateral_a), edge(index + 1, lateral_b));
+                let origin = world_to_psx(a.0, a.1, a.2);
+                renderer.set_object(origin, Mat3Fx12::IDENTITY);
+                let local = |x: f32, y: f32, z: f32| {
+                    let position = world_to_psx(x, y, z);
+                    Vec3i16::new(
+                        (position.x - origin.x) as i16,
+                        (position.y - origin.y) as i16,
+                        (position.z - origin.z) as i16,
+                    )
+                };
+                let wall =
+                    tiled(&art.treeline[(hash(key, 5, 0) % art.treeline.len() as u64) as usize]);
+                let u0 = ((index % TREELINE_REPEAT) * TREELINE_TEXELS) as u8;
+                let u1 = u0 + TREELINE_TEXELS as u8 - 1;
+                let v = |_: f32| 63u8;
+                let points = [
+                    Point::new(local(a.0, a.1 + a.3, a.2), lit(1.0, a.0, a.2), (u0, 0)),
+                    Point::new(local(b.0, b.1 + b.3, b.2), lit(1.0, b.0, b.2), (u1, 0)),
+                    Point::new(
+                        local(a.0, a.1, a.2),
+                        lit(TREELINE_FLOOR, a.0, a.2),
+                        (u0, v(a.3)),
+                    ),
+                    Point::new(
+                        local(b.0, b.1, b.2),
+                        lit(TREELINE_FLOOR, b.0, b.2),
+                        (u1, v(b.3)),
+                    ),
+                ];
+                renderer.polygon(&points, Surface::textured(wall.texture).tinted(tint), 0, 1);
+                let back = |index: usize, lateral: f32, inner: (f32, f32, f32, f32)| {
+                    let depth = track.treeline_depth(index, side);
+                    let (x, ground, z, _) = edge(index, lateral + side * depth);
+                    (x, ground, z, inner.1 + inner.3 - ground)
+                };
+                let (oa, ob) = (back(index, lateral_a, a), back(index + 1, lateral_b, b));
+                let face = |near: (f32, f32, f32, f32), far: (f32, f32, f32, f32), u: (u8, u8)| {
+                    [
+                        Point::new(
+                            local(near.0, near.1 + near.3, near.2),
+                            lit(0.8, near.0, near.2),
+                            (u.0, 0),
+                        ),
+                        Point::new(
+                            local(far.0, far.1 + far.3, far.2),
+                            lit(0.8, far.0, far.2),
+                            (u.1, 0),
+                        ),
+                        Point::new(
+                            local(near.0, near.1, near.2),
+                            lit(TREELINE_FLOOR, near.0, near.2),
+                            (u.0, 63),
+                        ),
+                        Point::new(
+                            local(far.0, far.1, far.2),
+                            lit(TREELINE_FLOOR, far.0, far.2),
+                            (u.1, 63),
+                        ),
+                    ]
+                };
+                let surface = Surface::textured(wall.texture).tinted(tint);
+                renderer.polygon(&face(oa, ob, (u0, u1)), surface, 0, 1);
+                let across =
+                    |depth: f32| (depth * TREELINE_TEXELS as f32 / SAMPLE).min(255.0) as u8;
+                if track.treeline(index.saturating_sub(1), side).is_none() {
+                    let span = across(track.treeline_depth(index, side));
+                    renderer.polygon(&face(a, oa, (0, span)), surface, 0, 2);
+                }
+                if track.treeline(index + 2, side).is_none() {
+                    let span = across(track.treeline_depth(index + 1, side));
+                    renderer.polygon(&face(b, ob, (0, span)), surface, 0, 2);
+                }
+                let roof = tiled(&art.canopy);
+                let span = across(track.treeline_depth(index, side));
+                let points = [
+                    Point::new(local(a.0, a.1 + a.3, a.2), lit(0.9, a.0, a.2), (u0, 0)),
+                    Point::new(local(b.0, b.1 + b.3, b.2), lit(0.9, b.0, b.2), (u1, 0)),
+                    Point::new(
+                        local(oa.0, oa.1 + oa.3, oa.2),
+                        lit(0.9, oa.0, oa.2),
+                        (u0, span),
+                    ),
+                    Point::new(
+                        local(ob.0, ob.1 + ob.3, ob.2),
+                        lit(0.9, ob.0, ob.2),
+                        (u1, span),
+                    ),
+                ];
+                renderer.polygon(&points, Surface::textured(roof.texture).tinted(tint), 0, 2);
+                if closed || canopy(side) > CANOPY_GAP {
+                    let reach = |lateral: f32| {
+                        if closed {
+                            lateral.abs()
+                        } else {
+                            CANOPY_REACH
+                        }
+                    };
+                    let (rx, rz) = track.sample(index).right();
+                    let (nx, nz) = track.sample(index + 1).right();
+                    let inward = |x: f32, y: f32, z: f32, rx: f32, rz: f32, reach: f32| {
+                        (
+                            x - rx * side * reach,
+                            y - CANOPY_DROOP,
+                            z - rz * side * reach,
+                        )
+                    };
+                    let (ta, tb) = ((a.0, a.1 + a.3, a.2), (b.0, b.1 + b.3, b.2));
+                    let (ia, ib) = (
+                        inward(ta.0, ta.1, ta.2, rx, rz, reach(lateral_a)),
+                        inward(tb.0, tb.1, tb.2, nx, nz, reach(lateral_b)),
+                    );
+                    tops.push((
+                        (ia.0 + ib.0) * 0.5,
+                        (ia.1 + ib.1) * 0.5,
+                        (ia.2 + ib.2) * 0.5,
+                    ));
+                    let leaves = tiled(&art.canopy);
+                    let span =
+                        (reach(lateral_a) * TREELINE_TEXELS as f32 / SAMPLE).min(255.0) as u8;
+                    let points = [
+                        Point::new(local(ta.0, ta.1, ta.2), lit(0.7, ta.0, ta.2), (u0, 0)),
+                        Point::new(local(tb.0, tb.1, tb.2), lit(0.7, tb.0, tb.2), (u1, 0)),
+                        Point::new(local(ia.0, ia.1, ia.2), lit(0.9, ia.0, ia.2), (u0, span)),
+                        Point::new(local(ib.0, ib.1, ib.2), lit(0.9, ib.0, ib.2), (u1, span)),
+                    ];
+                    renderer.polygon(
+                        &points,
+                        Surface::textured(leaves.texture).tinted(tint),
+                        -4,
+                        1,
+                    );
+                }
+                if hash_float(key, 2, 0) < TREELINE_VINES {
+                    let vine = art.vines[(hash(key, 3, 0) % art.vines.len() as u64) as usize];
+                    let t = hash_float(key, 4, 0);
+                    let (x, z) = (a.0 + (b.0 - a.0) * t, a.2 + (b.2 - a.2) * t);
+                    let top = a.1 + a.3 + (b.1 + b.3 - a.1 - a.3) * t + 0.6;
+                    let (rx, rz) = track.sample(index).right();
+                    let (x, z) = (x - rx * side * 0.4, z - rz * side * 0.4);
+                    let distance = (x - camera.x).hypot(z - camera.z);
+                    let image = band_image(&vine, fog_band(fog_amount(distance)));
+                    let color = lit(1.0, x, z);
+                    self.billboard(
+                        renderer,
+                        &image,
+                        [x, top - VINE_HEIGHT, z],
+                        VINE_HEIGHT * 0.8,
+                        VINE_HEIGHT,
+                        right,
+                        color,
+                        color,
+                    );
+                }
+            }
+            let shaft_key = hash(track.seed ^ 0x5aff, index as u64, 0);
+            if closed
+                && tops.len() == 2
+                && hash_float(shaft_key, 1, 0) < SHAFT_CHANCE
+                && lighting.daylight > 0.3
+            {
+                let top = (
+                    (tops[0].0 + tops[1].0) * 0.5,
+                    (tops[0].1 + tops[1].1) * 0.5,
+                    (tops[0].2 + tops[1].2) * 0.5,
+                );
+                self.shaft(renderer, track, camera, lighting, index, top, shaft_key);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn shaft(
+        &self,
+        renderer: &mut Renderer,
+        track: &Track,
+        camera: &Camera,
+        lighting: Lighting,
+        index: usize,
+        top: (f32, f32, f32),
+        key: u64,
+    ) {
+        let sample = track.sample(index);
+        let along = (hash_float(key, 2, 0) - 0.5) * SAMPLE;
+        let (fx, fz) = sample.forward();
+        let top = (top.0 + fx * along, top.1, top.2 + fz * along);
+        let sun = lighting.sun_direction;
+        let drop = top.1 - sample.y;
+        let lean = drop / sun[1].abs().max(0.4);
+        let bottom = (
+            top.0 - sun[0] * lean * 0.5,
+            sample.y,
+            top.2 - sun[2] * lean * 0.5,
+        );
+        let middle = (
+            (top.0 + bottom.0) * 0.5,
+            (top.1 + bottom.1) * 0.5,
+            (top.2 + bottom.2) * 0.5,
+        );
+        let to_camera = (camera.x - middle.0, camera.z - middle.2);
+        let length = to_camera.0.hypot(to_camera.1).max(0.1);
+        let side = (to_camera.1 / length, -to_camera.0 / length);
+        let fade = (1.0 - fog_amount(length)) * lighting.daylight;
+        let color = |amount: f32| {
+            [0, 1, 2].map(|c| (lighting.sun[c] as f32 * SHAFT_STRENGTH * amount * fade) as u8)
+        };
+        let origin = world_to_psx(middle.0, middle.1, middle.2);
+        renderer.set_object(origin, Mat3Fx12::IDENTITY);
+        let local = |(x, y, z): (f32, f32, f32), width: f32, sign: f32| {
+            let position = world_to_psx(x + side.0 * width * sign, y, z + side.1 * width * sign);
+            Vec3i16::new(
+                (position.x - origin.x) as i16,
+                (position.y - origin.y) as i16,
+                (position.z - origin.z) as i16,
+            )
+        };
+        let points = [
+            Point::new(local(top, SHAFT_TOP_WIDTH, -1.0), color(1.0), (0, 0)),
+            Point::new(local(top, SHAFT_TOP_WIDTH, 1.0), color(1.0), (0, 0)),
+            Point::new(local(bottom, SHAFT_BOTTOM_WIDTH, -1.0), color(0.35), (0, 0)),
+            Point::new(local(bottom, SHAFT_BOTTOM_WIDTH, 1.0), color(0.35), (0, 0)),
+        ];
+        let fog_enabled = renderer.fog_enabled;
+        renderer.fog_enabled = false;
+        renderer.polygon(&points, Surface::gouraud().blended(BlendMode::Add), -20, 2);
+        renderer.fog_enabled = fog_enabled;
     }
 
     fn draw_tunnels(
@@ -1361,6 +1661,9 @@ impl World {
                                 + slot as f32 * 3.0)
                         }
                     };
+                    if track.in_forest(index, lateral) {
+                        continue;
+                    }
                     if lateral.abs() > sample.clearance(lateral).min(sample.fold(lateral)) - 1.5 {
                         continue;
                     }
@@ -1589,6 +1892,7 @@ impl World {
             Prop::Pine => (pick(&art.pine), 5.5, 11.0, true),
             Prop::SnowFir => (pick(&art.snow_fir), 4.5, 9.0, true),
             Prop::Broadleaf => (pick(&art.broadleaf), 7.0, 14.0, true),
+            Prop::Kapok => (pick(&art.kapok), 9.0, 18.0, true),
             Prop::AutumnTree => (pick(&art.autumn), 7.0, 14.0, true),
             Prop::BareTree => (pick(&art.bare), 7.0, 14.0, true),
             Prop::Joshua => (pick(&art.joshua), 4.0, 8.0, true),

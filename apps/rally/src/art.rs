@@ -33,6 +33,7 @@ pub enum Ground {
     Leaves,
     Snow,
     Earth,
+    Jungle,
 }
 
 pub struct Art {
@@ -57,6 +58,9 @@ pub struct Art {
     pub mud: Vec<Image>,
     pub hay: Vec<Image>,
     pub signs: Vec<Image>,
+    pub vines: Vec<Image>,
+    pub kapok: Vec<Image>,
+    pub treeline: Vec<Image>,
     pub grass: Image,
     pub wheat: Image,
     pub leaves: Image,
@@ -77,10 +81,15 @@ pub struct Art {
     pub barrier: Image,
     pub ice: Image,
     pub rock_texture: Image,
+    pub jungle_floor: Image,
+    pub rockface: Image,
+    pub temple_stone: Image,
+    pub canopy: Image,
     pub horizon_forest: Image,
     pub horizon_farmland: Image,
     pub horizon_mesas: Image,
     pub horizon_alpine: Image,
+    pub horizon_jungle: Image,
     pub cliff_desert: Vec<Image>,
     pub blends: Blends,
 }
@@ -145,6 +154,10 @@ impl Art {
         let barrier = sheet.add(vram, sprite!("barrier"), false);
         let ice = sheet.add(vram, sprite!("ice"), false);
         let rock_texture = sheet.add(vram, sprite!("rock_texture"), false);
+        let jungle_floor = sheet.add(vram, sprite!("jungle_floor_0"), false);
+        let rockface = sheet.add(vram, sprite!("rockface_0"), false);
+        let temple_stone = sheet.add(vram, sprite!("temple_stone_0"), false);
+        let canopy = sheet.add(vram, sprite!("canopy"), false);
         let cliff_desert = family!(
             sheet,
             vram,
@@ -220,6 +233,9 @@ impl Art {
             "sign_rocks",
             "sign_quiet_lane"
         );
+        let vines = family!(sheet, vram, true, "vine_0", "vine_1", "vine_2", "vine_3");
+        let kapok = family!(sheet, vram, true, "kapok_0", "kapok_1");
+        let treeline = family!(sheet, vram, false, "treeline_0", "treeline_1");
         let blends = Blends::new(
             &mut sheet,
             Sources {
@@ -229,6 +245,7 @@ impl Art {
                     (Ground::Leaves, sprite!("ground_leaves")),
                     (Ground::Snow, sprite!("ground_snow")),
                     (Ground::Earth, sprite!("ground_earth")),
+                    (Ground::Jungle, sprite!("jungle_floor_0")),
                 ],
                 roads: &[
                     (Road::Gravel, sprite!("road_gravel_0")),
@@ -239,12 +256,14 @@ impl Art {
                 ],
                 desert_cliff: sprite!("cliff_desert_0"),
                 rock_cliff: sprite!("rock_texture"),
+                jungle_cliff: sprite!("rockface_0"),
             },
         );
         let horizon_forest = sheet.add_wide(vram, sprite!("horizon_forest"));
         let horizon_farmland = sheet.add_wide(vram, sprite!("horizon_farmland"));
         let horizon_mesas = sheet.add_wide(vram, sprite!("horizon_mesas"));
         let horizon_alpine = sheet.add_wide(vram, sprite!("horizon_alpine"));
+        let horizon_jungle = sheet.add_wide(vram, sprite!("horizon_jungle"));
         Self {
             sheet,
             broadleaf,
@@ -267,6 +286,9 @@ impl Art {
             mud,
             hay,
             signs,
+            vines,
+            kapok,
+            treeline,
             grass,
             wheat,
             leaves,
@@ -287,10 +309,15 @@ impl Art {
             barrier,
             ice,
             rock_texture,
+            jungle_floor,
+            rockface,
+            temple_stone,
+            canopy,
             horizon_forest,
             horizon_farmland,
             horizon_mesas,
             horizon_alpine,
+            horizon_jungle,
             cliff_desert,
             blends,
         }
@@ -314,6 +341,7 @@ impl Art {
     pub fn backdrop(&self, biome: usize) -> Option<Image> {
         match biome {
             0 => Some(self.horizon_forest),
+            5 => Some(self.horizon_jungle),
             1 | 4 => Some(self.horizon_farmland),
             2 => Some(self.horizon_mesas),
             3 => Some(self.horizon_alpine),
@@ -326,6 +354,7 @@ impl Art {
             Ground::Earth => {
                 tiled(&self.cliff_desert[(variant % self.cliff_desert.len() as u64) as usize])
             }
+            Ground::Jungle => tiled(&self.rockface),
             _ => tiled(&self.rock_texture),
         }
     }
@@ -333,6 +362,7 @@ impl Art {
     pub fn bridge_wall(&self, ground: Ground) -> Image {
         match ground {
             Ground::Earth => self.desert_wall,
+            Ground::Jungle => self.temple_stone,
             Ground::Wheat | Ground::Snow => self.concrete,
             Ground::Grass | Ground::Leaves => self.stone_wall,
         }
@@ -341,6 +371,7 @@ impl Art {
     pub fn tunnel_lining(&self, ground: Ground) -> Image {
         match ground {
             Ground::Earth => self.desert_wall,
+            Ground::Jungle => self.temple_stone,
             Ground::Wheat | Ground::Snow => self.concrete_panels,
             Ground::Grass | Ground::Leaves => self.tunnel_wall,
         }
@@ -353,6 +384,7 @@ impl Art {
             Ground::Leaves => Some(&self.leaves),
             Ground::Snow => Some(&self.snow_ground),
             Ground::Earth => Some(&self.earth),
+            Ground::Jungle => Some(&self.jungle_floor),
         }
     }
 }
