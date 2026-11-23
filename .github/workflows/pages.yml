@@ -23,7 +23,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install trunk --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.22.2
       - working-directory: web/demo
         run: trunk build --release
       - working-directory: web/rally
