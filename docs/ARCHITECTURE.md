@@ -5,7 +5,7 @@
 - `psxel_vram`: 1024x512 BGR555 VRAM, texture pages, 4/8/15-bit texel fetch, CLUTs, texture windows, allocator.
 - `psxel_soft`: software rasteriser into VRAM: affine interpolation, modulation, dithering, semi-transparency, mask bit, top-left fill rule.
 - `psxel_gpu`: `Presenter` converts a BGR555 frame to RGBA8 and presents it with nearest-neighbour integer scaling, 4:3 aspect and letterboxing.
-- `psxel_engine`: window, input (keyboard, mouse, touch drag, web gamepad), fixed 60 Hz tick, BGR555 framebuffer handed to the app.
+- `psxel_engine`: window, input (keyboard, mouse, touch drag, web gamepad), fixed 60 Hz tick, BGR555 framebuffer handed to the app. `Game::display` can request the CRT filter (beam, halation and composite passes in `psxel_gpu::crt`) and a render frame limit (simulation stays at 60 Hz); `option` reads URL query or `--name=value` arguments.
 
 ## Apps
 

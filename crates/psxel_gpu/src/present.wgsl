@@ -2,7 +2,7 @@ struct Params {
     viewport_origin: vec2<f32>,
     viewport_size: vec2<f32>,
     source_size: vec2<f32>,
-    _padding: vec2<f32>,
+    _effect: vec2<f32>,
 }
 
 @group(0) @binding(0) var source: texture_2d<f32>;

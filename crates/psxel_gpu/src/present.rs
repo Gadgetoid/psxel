@@ -1,3 +1,4 @@
+use crate::crt::CrtFilter;
 use crate::{bgr555_to_rgba8, DISPLAY_HEIGHT};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,7 +35,7 @@ struct Params {
     viewport_origin: [f32; 2],
     viewport_size: [f32; 2],
     source_size: [f32; 2],
-    padding: [f32; 2],
+    effect: [f32; 2],
 }
 
 impl Params {
@@ -43,7 +44,7 @@ impl Params {
             self.viewport_origin,
             self.viewport_size,
             self.source_size,
-            self.padding,
+            self.effect,
         ]
         .iter()
         .flatten()
@@ -60,6 +61,9 @@ pub struct Presenter {
     frame: wgpu::Texture,
     frame_width: u32,
     staging: Vec<u8>,
+    afterglow: Vec<f32>,
+    surface_format: wgpu::TextureFormat,
+    crt: Option<CrtFilter>,
 }
 
 impl Presenter {
@@ -137,6 +141,9 @@ impl Presenter {
             frame,
             frame_width,
             staging: Vec::new(),
+            afterglow: Vec::new(),
+            surface_format,
+            crt: None,
         }
     }
 
@@ -205,7 +212,13 @@ impl Presenter {
             .create_view(&wgpu::TextureViewDescriptor::default())
     }
 
-    pub fn upload_bgr555(&mut self, queue: &wgpu::Queue, pixels: &[u16], stride: usize) {
+    pub fn upload_bgr555(
+        &mut self,
+        queue: &wgpu::Queue,
+        pixels: &[u16],
+        stride: usize,
+        persistence: f32,
+    ) {
         let width = self.frame_width as usize;
         let height = DISPLAY_HEIGHT as usize;
         self.staging.clear();
@@ -213,6 +226,11 @@ impl Presenter {
             for &pixel in &pixels[row * stride..row * stride + width] {
                 self.staging.extend_from_slice(&bgr555_to_rgba8(pixel));
             }
+        }
+        if persistence > 0.0 {
+            self.apply_afterglow(persistence);
+        } else {
+            self.afterglow.clear();
         }
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -231,22 +249,65 @@ impl Presenter {
         );
     }
 
+    fn apply_afterglow(&mut self, persistence: f32) {
+        if self.afterglow.len() != self.staging.len() {
+            self.afterglow = self
+                .staging
+                .iter()
+                .map(|&value| (value as f32 / 255.0).powi(2))
+                .collect();
+            return;
+        }
+        for (index, value) in self.staging.iter_mut().enumerate() {
+            if index % 4 == 3 {
+                continue;
+            }
+            let fresh = (*value as f32 / 255.0).powi(2);
+            let glow = self.afterglow[index] * persistence;
+            let lit = fresh.max(glow);
+            self.afterglow[index] = lit;
+            *value = (lit.sqrt() * 255.0).round() as u8;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn present(
-        &self,
+        &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         surface_width: u32,
         surface_height: u32,
+        crt: bool,
     ) {
         let viewport = letterbox(surface_width, surface_height);
         let params = Params {
             viewport_origin: [viewport.x as f32, viewport.y as f32],
             viewport_size: [viewport.width as f32, viewport.height as f32],
             source_size: [self.frame_width as f32, DISPLAY_HEIGHT as f32],
-            padding: [0.0; 2],
+            effect: [0.0; 2],
         };
         queue.write_buffer(&self.params_buffer, 0, &params.as_bytes());
+        if crt {
+            let format = self.surface_format;
+            let filter = self
+                .crt
+                .get_or_insert_with(|| CrtFilter::new(device, format));
+            let frame = self
+                .frame
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            filter.render(
+                device,
+                encoder,
+                &frame,
+                self.frame_width,
+                &self.params_buffer,
+                target,
+                viewport,
+            );
+            return;
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("present"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

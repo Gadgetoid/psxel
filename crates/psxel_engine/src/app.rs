@@ -13,6 +13,7 @@ pub use winit::keyboard::KeyCode as Key;
 
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / 60);
 const MAX_TICKS_PER_FRAME: u32 = 5;
+const CRT_PERSISTENCE: f32 = 0.15;
 #[cfg(target_arch = "wasm32")]
 const MAX_PIXEL_RATIO: f64 = 2.0;
 
@@ -119,12 +120,40 @@ impl Input {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Display {
+    pub crt: bool,
+    pub frame_limit: Option<u32>,
+}
+
+pub fn option(name: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    let list: Vec<String> = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .unwrap_or_default()
+        .trim_start_matches('?')
+        .split('&')
+        .map(str::to_string)
+        .collect();
+    #[cfg(not(target_arch = "wasm32"))]
+    let list: Vec<String> = std::env::args()
+        .filter_map(|argument| argument.strip_prefix("--").map(str::to_string))
+        .collect();
+    list.iter().find_map(|entry| {
+        let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
+        (key == name).then(|| value.to_string())
+    })
+}
+
 pub trait Game: 'static {
     fn frame_width(&self) -> u32 {
         320
     }
     fn update(&mut self, input: &Input);
     fn audio(&mut self, _audio: &mut crate::audio::Audio) {}
+    fn display(&self) -> Display {
+        Display::default()
+    }
     fn render(&mut self, framebuffer: &mut Framebuffer);
 }
 
@@ -202,7 +231,7 @@ impl Gpu {
         self.surface.configure(&self.device, &self.config);
     }
 
-    fn draw(&mut self, framebuffer: &Framebuffer) {
+    fn draw(&mut self, framebuffer: &Framebuffer, crt: bool) {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -214,8 +243,12 @@ impl Gpu {
         };
         self.presenter
             .set_frame_width(&self.device, framebuffer.width as u32);
-        self.presenter
-            .upload_bgr555(&self.queue, &framebuffer.pixels, framebuffer.width);
+        self.presenter.upload_bgr555(
+            &self.queue,
+            &framebuffer.pixels,
+            framebuffer.width,
+            if crt { CRT_PERSISTENCE } else { 0.0 },
+        );
         let view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -223,11 +256,13 @@ impl Gpu {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         self.presenter.present(
+            &self.device,
             &self.queue,
             &mut encoder,
             &view,
             self.config.width,
             self.config.height,
+            crt,
         );
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
@@ -244,11 +279,12 @@ struct App<G: Game> {
     input: Input,
     audio: crate::audio::Audio,
     last_frame: Instant,
+    last_render: Instant,
     accumulator: Duration,
 }
 
 impl<G: Game> App<G> {
-    fn step(&mut self) {
+    fn step(&mut self) -> bool {
         let now = Instant::now();
         self.accumulator += now - self.last_frame;
         self.last_frame = now;
@@ -266,12 +302,35 @@ impl<G: Game> App<G> {
             self.input.gamepad_pressed.clear();
             self.input.tapped = false;
         }
-        let width = self.game.frame_width() as usize;
-        if self.framebuffer.width != width {
-            self.framebuffer = Framebuffer::new(width);
+        let due = match self.game.display().frame_limit {
+            Some(rate) if rate > 0 => {
+                let interval = Duration::from_secs_f64(1.0 / rate as f64);
+                let elapsed = now - self.last_render;
+                if elapsed >= interval {
+                    self.last_render = if elapsed >= interval * 2 {
+                        now
+                    } else {
+                        self.last_render + interval
+                    };
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => {
+                self.last_render = now;
+                true
+            }
+        };
+        if due {
+            let width = self.game.frame_width() as usize;
+            if self.framebuffer.width != width {
+                self.framebuffer = Framebuffer::new(width);
+            }
+            self.game.render(&mut self.framebuffer);
         }
-        self.game.render(&mut self.framebuffer);
         self.game.audio(&mut self.audio);
+        due
     }
 }
 
@@ -441,9 +500,12 @@ impl<G: Game> ApplicationHandler<Gpu> for App<G> {
                 }
                 #[cfg(target_arch = "wasm32")]
                 self.match_canvas_size();
-                self.step();
+                let rendered = self.step();
+                let crt = self.game.display().crt;
                 if let Some(gpu) = &mut self.gpu {
-                    gpu.draw(&self.framebuffer);
+                    if rendered {
+                        gpu.draw(&self.framebuffer, crt);
+                    }
                     gpu.window.request_redraw();
                 }
             }
@@ -474,6 +536,7 @@ pub fn run<G: Game>(title: &str, game: G) {
         input: Input::default(),
         audio: crate::audio::Audio::default(),
         last_frame: Instant::now(),
+        last_render: Instant::now(),
         accumulator: Duration::ZERO,
     };
 

@@ -27,7 +27,7 @@ mod biome {
     pub type Rgb = [u8; 3];
 }
 
-use psxel_engine::{Framebuffer, Game, Input, Key};
+use psxel_engine::{Display, Framebuffer, Game, Input, Key};
 use psxel_soft::{draw, draw_all, DrawEnv};
 use psxel_vram::Vram;
 
@@ -51,8 +51,12 @@ const GROTTO_FOG: Rgb = [6, 10, 8];
 const OUTSIDE_SKY: Rgb = [128, 150, 140];
 const FOG_NEAR: (f32, f32) = (16.0, 6.0);
 const FOG_FAR: (f32, f32) = (115.0, 60.0);
+const SHORT_FOG: Rgb = [16, 22, 17];
+const SHORT_NEAR: (f32, f32) = (18.0, 4.0);
+const SHORT_FAR: (f32, f32) = (130.0, 35.0);
 const LOOK_SPEED: f32 = 1.6;
 const FLY_SPEED: f32 = 6.0;
+const PERIOD_FRAME_RATE: u32 = 20;
 
 fn lerp_rgb(from: Rgb, to: Rgb, t: f32) -> Rgb {
     [0, 1, 2].map(|c| lerp(from[c] as f32, to[c] as f32, t).round() as u8)
@@ -128,6 +132,8 @@ struct Temple {
     free: Option<FreeCamera>,
     camera: Camera,
     frame: u32,
+    display: Display,
+    short_fog: bool,
 }
 
 impl Temple {
@@ -156,6 +162,12 @@ impl Temple {
                 roll: 0.0,
             },
             frame: 0,
+            short_fog: !matches!(psxel_engine::option("fog").as_deref(), Some("0" | "off")),
+            display: Display {
+                crt: !matches!(psxel_engine::option("crt").as_deref(), Some("0" | "off")),
+                frame_limit: psxel_engine::option("fps")
+                    .map(|value| value.parse().unwrap_or(PERIOD_FRAME_RATE)),
+            },
         };
         temple.camera = temple.tour_camera();
         temple
@@ -194,9 +206,14 @@ impl Temple {
             GROTTO_FOG,
             grotto::amount(position),
         );
-        let fog = lerp_rgb(OUTSIDE_FOG, indoor_fog, inside);
-        let near = lerp(FOG_NEAR.0, FOG_NEAR.1, inside);
-        let far = lerp(FOG_FAR.0, FOG_FAR.1, inside);
+        let (outside_fog, near_range, far_range) = if self.short_fog {
+            (SHORT_FOG, SHORT_NEAR, SHORT_FAR)
+        } else {
+            (OUTSIDE_FOG, FOG_NEAR, FOG_FAR)
+        };
+        let fog = lerp_rgb(outside_fog, indoor_fog, inside);
+        let near = lerp(near_range.0, near_range.1, inside);
+        let far = lerp(far_range.0, far_range.1, inside);
         set_fog_range(&mut self.renderer, near, far);
         self.renderer.begin(&camera, fog);
         let view = View {
@@ -221,7 +238,12 @@ impl Temple {
         let buffer_y = (self.frame % 2) as i32 * SCREEN_HEIGHT;
         self.frame = self.frame.wrapping_add(1);
         let env = DrawEnv::new(0, buffer_y, SCREEN_WIDTH, SCREEN_HEIGHT);
-        let sky = lerp_rgb(OUTSIDE_SKY, indoor_fog, inside);
+        let outside_sky = if self.short_fog {
+            SHORT_FOG
+        } else {
+            OUTSIDE_SKY
+        };
+        let sky = lerp_rgb(outside_sky, indoor_fog, inside);
         draw(
             &mut self.vram,
             &env,
@@ -306,6 +328,18 @@ impl Temple {
 
 impl Game for Temple {
     fn update(&mut self, input: &Input) {
+        if input.just_pressed(Key::KeyV) {
+            self.display.crt = !self.display.crt;
+        }
+        if input.just_pressed(Key::KeyG) {
+            self.short_fog = !self.short_fog;
+        }
+        if input.just_pressed(Key::KeyF) {
+            self.display.frame_limit = match self.display.frame_limit {
+                Some(_) => None,
+                None => Some(PERIOD_FRAME_RATE),
+            };
+        }
         if input.just_pressed(Key::KeyM) {
             self.sound.muted = !self.sound.muted;
         }
@@ -332,6 +366,10 @@ impl Game for Temple {
             Some(free) => free.camera(),
             None => self.tour_camera(),
         };
+    }
+
+    fn display(&self) -> Display {
+        self.display
     }
 
     fn audio(&mut self, audio: &mut psxel_engine::Audio) {
