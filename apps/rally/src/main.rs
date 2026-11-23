@@ -1371,6 +1371,37 @@ mod tests {
     }
 
     #[test]
+    fn tree_corridors_are_solid() {
+        let mut track = Track::new(3);
+        track.ensure(3000);
+        let index = (40..2900)
+            .find(|&index| (index - 3..=index + 3).all(|near| track.treeline(near, 1.0).is_some()))
+            .unwrap();
+        for side in [-1.0f32, 1.0] {
+            let wall = track.treeline(index, side).unwrap();
+            let sample = track.sample(index);
+            let mut car = Car::new(&track);
+            car.x = sample.x;
+            car.z = sample.z;
+            car.y = sample.y;
+            car.index = index;
+            car.heading = sample.heading + side * std::f32::consts::FRAC_PI_2;
+            let (rx, rz) = sample.right();
+            car.velocity = (rx * side * 25.0, rz * side * 25.0);
+            let controls = Controls {
+                throttle: 1.0,
+                steer: 0.0,
+                handbrake: false,
+            };
+            for _ in 0..120 {
+                car.update(controls, &mut track);
+            }
+            let (_, _, lateral) = track.locate(car.x, car.z, index);
+            assert!(lateral * side < wall.abs(), "{side} {lateral} {wall}");
+        }
+    }
+
+    #[test]
     fn car_drives_out_of_stream() {
         let mut track = Track::new(8);
         track.ensure(800);

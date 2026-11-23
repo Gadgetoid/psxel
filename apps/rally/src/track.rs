@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::biome::BiomeSchedule;
@@ -244,6 +245,14 @@ const BARRIER_HEIGHT: f32 = 0.8;
 const BARRIER_THICKNESS: f32 = 0.3;
 const BARRIER_OFFSET: f32 = 0.3;
 const BARRIER_CURVATURE: f32 = 1.0 / 30.0;
+const TREELINE_RUN: usize = 32;
+const TREELINE_MARGIN: usize = 2;
+const TREELINE_CHANCE: f32 = 0.7;
+const TREELINE_SETBACK: f32 = 3.0;
+const TREELINE_DEPTH: f32 = 8.0;
+const TREELINE_FLAT: f32 = 1.2;
+pub const TREELINE_HEIGHT: f32 = 6.0;
+const TREELINE_THICKNESS: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Obstacle {
@@ -251,6 +260,7 @@ pub struct Obstacle {
     pub height: f32,
     pub thickness: f32,
     pub barrier: bool,
+    pub trees: bool,
 }
 const RAVINE_RIVER_CHANCE: f32 = 0.5;
 const TUNNEL_CHANCE: f32 = 0.35;
@@ -302,6 +312,7 @@ pub struct Track {
     curvature: f32,
     phases: [f32; 3],
     grid: HashMap<(i32, i32), Vec<u32>>,
+    treeline_runs: RefCell<HashMap<usize, bool>>,
 }
 
 const GRID_CELL: f32 = 64.0;
@@ -399,6 +410,7 @@ impl Track {
             curvature: 0.0,
             phases,
             grid: HashMap::new(),
+            treeline_runs: RefCell::new(HashMap::new()),
         };
         track.push_samples(30, 0.0);
         track.ensure(200);
@@ -463,6 +475,7 @@ impl Track {
     }
 
     fn touch(&mut self, (min_x, min_z, max_x, max_z): (f32, f32, f32, f32), reach: f32) {
+        self.treeline_runs.get_mut().clear();
         self.dirty
             .push((min_x - reach, min_z - reach, max_x + reach, max_z + reach));
     }
@@ -750,6 +763,15 @@ impl Track {
             let (x, z) = self.sample(index).offset(lateral);
             self.riverbed(x, z)
         };
+        if let Some(lateral) = self.treeline(index, side) {
+            return Some(Obstacle {
+                lateral,
+                height: TREELINE_HEIGHT,
+                thickness: TREELINE_THICKNESS,
+                barrier: false,
+                trees: true,
+            });
+        }
         self.barrier(index, side)
             .filter(|&lateral| !flooded(lateral))
             .map(|lateral| Obstacle {
@@ -757,6 +779,7 @@ impl Track {
                 height: BARRIER_HEIGHT,
                 thickness: BARRIER_THICKNESS,
                 barrier: true,
+                trees: false,
             })
             .or_else(|| {
                 self.wall(index, side)
@@ -766,8 +789,59 @@ impl Track {
                         height: WALL_HEIGHT,
                         thickness: WALL_THICKNESS,
                         barrier: false,
+                        trees: false,
                     })
             })
+    }
+
+    pub fn treeline(&self, index: usize, side: f32) -> Option<f32> {
+        if index < WALL_START {
+            return None;
+        }
+        let run = index / TREELINE_RUN;
+        let walled = self.treeline_runs.borrow().get(&run).copied();
+        let walled = match walled {
+            Some(walled) => walled,
+            None => {
+                let (first, last) = (run * TREELINE_RUN, (run + 1) * TREELINE_RUN);
+                if last + TREELINE_MARGIN >= self.samples.len() {
+                    return None;
+                }
+                let walled = self.treeline_run(first, last);
+                self.treeline_runs.borrow_mut().insert(run, walled);
+                walled
+            }
+        };
+        walled.then(|| side * self.treeline_lateral(index))
+    }
+
+    fn treeline_lateral(&self, index: usize) -> f32 {
+        self.shoulder(index) + TREELINE_SETBACK
+    }
+
+    fn treeline_run(&self, first: usize, last: usize) -> bool {
+        let key = crate::rng::hash(self.seed ^ 0x7ee1, first as u64, 0);
+        if crate::rng::hash_float(key, 0, 0) >= TREELINE_CHANCE {
+            return false;
+        }
+        (first - TREELINE_MARGIN..last + TREELINE_MARGIN).all(|index| {
+            let sample = self.samples[index];
+            let character = self.character(index);
+            let lateral = self.treeline_lateral(index);
+            self.ground_at(index) == crate::art::Ground::Jungle
+                && !self.is_structure(index)
+                && character.cutting + character.ledge.abs() + character.valley.abs() < 0.05
+                && [-1.0f32, 1.0].iter().all(|&side| {
+                    let (x, z) = sample.offset(side * lateral);
+                    sample.clearance(side) > lateral + TREELINE_THICKNESS
+                        && self.side_height(index, side * lateral).abs() < TREELINE_FLAT
+                        && self
+                            .side_height(index, side * (lateral + TREELINE_DEPTH))
+                            .abs()
+                            < TREELINE_FLAT
+                        && !self.riverbed(x, z)
+                })
+        })
     }
 
     fn barrier(&self, index: usize, side: f32) -> Option<f32> {

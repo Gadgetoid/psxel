@@ -28,15 +28,12 @@ const SIGN_MOUNT: f32 = 1.5;
 const SIGN_POST: f32 = 0.16;
 const SIGN_SETBACK: f32 = 0.8;
 const ROOF_CLEARANCE: f32 = 0.3;
-const TREELINE_SETBACK: f32 = 4.0;
 const TREELINE_SINK: f32 = 0.6;
 const TREELINE_LOW: f32 = 7.0;
 const TREELINE_HIGH: f32 = 12.0;
 const TREELINE_TEXELS: usize = 16;
 const TREELINE_REPEAT: usize = 4;
 const TREELINE_FLOOR: f32 = 0.35;
-const ENCLOSED_REACH: f32 = 6.0;
-const ENCLOSED_RISE: f32 = 2.5;
 const CANOPY_GAP: f32 = 0.35;
 const CANOPY_REACH: f32 = 5.5;
 const CANOPY_DROOP: f32 = 1.5;
@@ -279,7 +276,7 @@ impl World {
                 else {
                     continue;
                 };
-                if first.barrier != second.barrier {
+                if first.barrier != second.barrier || first.trees || second.trees {
                     continue;
                 }
                 let (lateral_a, lateral_b) = (first.lateral, second.lateral);
@@ -413,7 +410,9 @@ impl World {
                 let continues = |other: Option<usize>| {
                     other
                         .and_then(|other| track.obstacle(other, side))
-                        .is_some_and(|obstacle| obstacle.barrier == first.barrier)
+                        .is_some_and(|obstacle| {
+                            !obstacle.trees && obstacle.barrier == first.barrier
+                        })
                 };
                 let caps = [
                     (&a, lateral_a, -1.0, continues(index.checked_sub(1))),
@@ -481,47 +480,20 @@ impl World {
             });
             lighting.lit_by_beam(base, x, z)
         };
-        let jungle = |index: usize| {
-            let (a, b, t) = track.biomes.at(Track::distance(index));
-            let weight = |biome: usize| {
-                if BIOMES[biome].ground == Ground::Jungle {
-                    1.0
-                } else {
-                    0.0
-                }
-            };
-            weight(a) * (1.0 - t) + weight(b) * t
-        };
         for index in start..end {
-            if track.is_structure(index) || track.is_structure(index + 1) {
-                continue;
-            }
-            let presence = jungle(index).min(jungle(index + 1));
-            if presence <= 0.0 {
-                continue;
-            }
-            let enclosed = |index: usize, side: f32| {
-                let character = track.character(index);
-                let rise =
-                    track.side_height(index, side * (track.shoulder(index) + ENCLOSED_REACH));
-                character.cutting > 0.5 || character.ledge * side > 0.5 || rise > ENCLOSED_RISE
-            };
             let walled = [-1.0f32, 1.0].map(|side| {
-                let key = hash(track.seed ^ 0x7ee5, index as u64, side as i64 as u64);
-                hash_float(key, 1, 0) <= presence
-                    && enclosed(index, side)
-                    && enclosed(index + 1, side)
+                track
+                    .treeline(index, side)
+                    .zip(track.treeline(index + 1, side))
             });
             let mut tops: Vec<(f32, f32, f32)> = Vec::new();
             for (side, walled) in [-1.0f32, 1.0].into_iter().zip(walled) {
-                if !walled {
+                let Some((lateral_a, lateral_b)) = walled else {
                     continue;
-                }
+                };
                 let key = hash(track.seed ^ 0x7ee5, index as u64, side as i64 as u64);
-                let edge = |index: usize| {
+                let edge = |index: usize, lateral: f32| {
                     let sample = track.sample(index);
-                    let setback = track.shoulder(index) + TREELINE_SETBACK;
-                    let lateral = side * setback.min(sample.clearance(side) - 1.0);
                     let (x, z) = sample.offset(lateral);
                     let ground = self.landscape.height_at(track, x, z) - TREELINE_SINK;
                     let height = TREELINE_LOW
@@ -532,10 +504,7 @@ impl World {
                             );
                     (x, ground, z, height)
                 };
-                let (a, b) = (edge(index), edge(index + 1));
-                if track.riverbed(a.0, a.2) || track.riverbed(b.0, b.2) {
-                    continue;
-                }
+                let (a, b) = (edge(index, lateral_a), edge(index + 1, lateral_b));
                 let origin = world_to_psx(a.0, a.1, a.2);
                 renderer.set_object(origin, Mat3Fx12::IDENTITY);
                 let local = |x: f32, y: f32, z: f32| {
