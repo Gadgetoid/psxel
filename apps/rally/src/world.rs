@@ -22,6 +22,7 @@ const PRECIPITATION_DROPS: usize = 240;
 const PRECIPITATION_RADIUS: f32 = 24.0;
 const GROUND_BIAS: i32 = 160;
 const WATER_BIAS: i32 = -250;
+const BEAM_STRENGTH: f32 = 0.5;
 const KERB: f32 = 0.6;
 const PARAPET: f32 = 0.9;
 const FASCIA: f32 = 1.1;
@@ -89,7 +90,7 @@ impl Lighting {
             return 0.0;
         }
         let lateral = (dx * light.forward.1 - dz * light.forward.0).abs();
-        let width = 1.4 + along * 0.42;
+        let width = 3.2 + along * 0.42;
         let spread = (1.0 - (lateral / width).powi(2)).max(0.0);
         let falloff = (1.0 - along / BEAM_RANGE).powi(2);
         let onset = (along / 3.0).min(1.0);
@@ -101,7 +102,7 @@ impl Lighting {
         if beam <= 0.0 {
             return color;
         }
-        [0, 1, 2].map(|c| (color[c] as f32 + BEAM_COLOR[c] * beam * 0.32).min(255.0) as u8)
+        [0, 1, 2].map(|c| (color[c] as f32 + BEAM_COLOR[c] * beam * BEAM_STRENGTH).min(255.0) as u8)
     }
 
     pub fn shade(&self) -> f32 {

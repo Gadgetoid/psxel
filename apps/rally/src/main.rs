@@ -1014,8 +1014,6 @@ impl Game for Rally {
             draw_lamps(
                 &mut self.renderer,
                 &self.atlas,
-                &self.world,
-                &self.track,
                 &self.car,
                 &self.camera,
                 beam.strength,
@@ -1083,8 +1081,6 @@ impl Game for Rally {
 fn draw_lamps(
     renderer: &mut Renderer,
     atlas: &Atlas,
-    world: &World,
-    track: &Track,
     car: &Car,
     camera: &render::Camera,
     strength: f32,
@@ -1157,51 +1153,6 @@ fn draw_lamps(
             -470,
         );
     }
-    let pool = |forward: f32, side: f32| {
-        let x = car.x + fx * forward + rx * side;
-        let z = car.z + fz * forward + rz * side;
-        (x, world.landscape.height_at(track, x, z) + 0.08, z)
-    };
-    let origin = world_to_psx(car.x, car.y, car.z);
-    renderer.set_object(origin, Mat3Fx12::IDENTITY);
-    let corners = [
-        pool(22.0, -8.0),
-        pool(22.0, 8.0),
-        pool(3.0, -1.4),
-        pool(3.0, 1.4),
-    ];
-    let near = render_scale([60, 55, 42], strength);
-    let far = render_scale([8, 7, 5], strength);
-    let colors = [far, far, near, near];
-    let uvs = [
-        (puff.u, puff.v),
-        (puff.u + 15, puff.v),
-        (puff.u + 4, puff.v + 15),
-        (puff.u + 11, puff.v + 15),
-    ];
-    let points: Vec<Point> = corners
-        .iter()
-        .zip(uvs)
-        .zip(colors)
-        .map(|((&(x, y, z), uv), color)| {
-            let position = world_to_psx(x, y, z);
-            Point::new(
-                Vec3i16::new(
-                    (position.x - origin.x) as i16,
-                    (position.y - origin.y) as i16,
-                    (position.z - origin.z) as i16,
-                ),
-                color,
-                uv,
-            )
-        })
-        .collect();
-    renderer.polygon(
-        &points,
-        Surface::textured(puff.texture).blended(psx_prim::BlendMode::Add),
-        -330,
-        2,
-    );
     renderer.fog_enabled = fog_enabled;
 }
 
