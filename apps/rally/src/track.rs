@@ -235,6 +235,7 @@ const TUNNEL_SPREAD: f32 = 45.0;
 const PORTAL_FACE: f32 = 6.0;
 const SLOT_REACH: f32 = 4.0;
 const SLOT_MARGIN: f32 = 1.5;
+const CUTTING_RAMP: f32 = 6.0;
 pub const TUNNEL_ROOF_HALF: f32 = 15.0;
 pub const TUNNEL_COVER_HEIGHT: f32 = TUNNEL_COVER;
 
@@ -851,12 +852,23 @@ impl Track {
             .min_by(|a, b| a.distance.total_cmp(&b.distance))?;
         let position = Self::distance(point.index) + point.t * SAMPLE;
         let (first, last) = (Self::distance(tunnel.start), Self::distance(tunnel.end - 1));
-        let outside = (first - position).max(position - last).max(0.0) + point.overshoot;
-        let corridor = point.lateral.abs() < self.half_width(point.index) + SLOT_MARGIN;
-        if outside > 0.0 && corridor {
+        let beyond = (first - position).max(position - last);
+        let outside = if beyond > 0.0 {
+            beyond + point.overshoot
+        } else {
+            0.0
+        };
+        let cut = if outside > 0.0 {
+            let edge = self.half_width(point.index) + SLOT_MARGIN;
+            let ramp = ((point.lateral.abs() - edge) / CUTTING_RAMP).clamp(0.0, 1.0);
+            ramp * ramp * (3.0 - 2.0 * ramp)
+        } else {
+            1.0
+        };
+        if cut <= 0.0 {
             return None;
         }
-        let face = (1.0 - outside / PORTAL_FACE).clamp(0.0, 1.0);
+        let face = (1.0 - outside / PORTAL_FACE).clamp(0.0, 1.0) * cut;
         let side = ((point.lateral.abs() - TUNNEL_SHOULDER) / TUNNEL_SPREAD).clamp(0.0, 1.0);
         let side = 1.0 - side * side * (3.0 - 2.0 * side);
         let weight = face.sqrt() * side;
