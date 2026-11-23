@@ -72,8 +72,8 @@ LATE_TEXTURES = [
     ("verge_dirt", "grassy_dirt_*", 1, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("puddle_mud", "muddy_puddle_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("road_snow_single", "snowy_dirt_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.8, crop=(0.0, 0.0, 0.972, 1.0))),
-    ("road_snow_0", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.7)),
-    ("road_snow_1", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 1, dict(kind="direct", overlap=0.1, detail=0.7, straighten=True)),
+    ("road_snow_0", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.7, rut_spacing=0.18)),
+    ("road_snow_1", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 1, dict(kind="direct", overlap=0.1, detail=0.7, straighten=True, rut_spacing=0.18)),
     ("barrier", "race_track_barriers_*", 0, dict(kind="direct", overlap=0.0, detail=0.9, crop=(0.0, 0.0, 1.0, 0.25), size=(64, 16))),
 ]
 
@@ -603,9 +603,27 @@ def straighten_tracks(rgb):
     return np.stack(channels, axis=-1)
 
 
+def stretch_columns(strip, width):
+    image = Image.fromarray(np.clip(strip, 0, 255).astype(np.uint8))
+    return np.asarray(image.resize((max(1, width), strip.shape[0]), Image.BICUBIC), dtype=np.float32)
+
+
+def space_ruts(rgb, spacing):
+    height, width = rgb.shape[:2]
+    left, right = track_columns(rgb, slice(0, height))
+    margin = int((right - left) * 0.35)
+    core = rgb[:, max(0, left - margin):min(width, right + margin)].astype(np.float32)
+    side = max(1, (int(round((right - left) / spacing)) - core.shape[1]) // 2)
+    left_snow = rgb[:, :max(1, left - margin)].astype(np.float32)
+    right_snow = rgb[:, min(width - 1, right + margin):].astype(np.float32)
+    return np.concatenate([stretch_columns(left_snow, side), core, stretch_columns(right_snow, side)], axis=1)
+
+
 def direct_texture(rgb, settings):
     if settings.get("straighten"):
         rgb = straighten_tracks(rgb)
+    if "rut_spacing" in settings:
+        rgb = space_ruts(rgb, settings["rut_spacing"])
     if "crop" in settings:
         left, top, right, bottom = settings["crop"]
         height, width = rgb.shape[:2]
