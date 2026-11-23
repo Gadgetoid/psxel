@@ -108,11 +108,18 @@ impl Landscape {
     }
 
     fn refresh(&self, track: &Track) {
-        let length = track.samples.len();
-        if *self.generated.borrow() != length {
-            self.cache.borrow_mut().clear();
-            *self.generated.borrow_mut() = length;
+        let processed = *self.generated.borrow();
+        let regions = &track.dirty[processed.min(track.dirty.len())..];
+        if regions.is_empty() {
+            return;
         }
+        *self.generated.borrow_mut() = track.dirty.len();
+        self.cache.borrow_mut().retain(|&(gx, gz), _| {
+            let (x, z) = (gx as f32 * LATTICE, gz as f32 * LATTICE);
+            !regions.iter().any(|&(min_x, min_z, max_x, max_z)| {
+                x >= min_x && x <= max_x && z >= min_z && z <= max_z
+            })
+        });
     }
 
     pub fn height_at(&self, track: &Track, x: f32, z: f32) -> f32 {

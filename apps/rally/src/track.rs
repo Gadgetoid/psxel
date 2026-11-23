@@ -263,6 +263,7 @@ const DECK_REACH: f32 = 18.0;
 const DECK_RISE: f32 = 3.0;
 const DECK_STEP_UP: f32 = 1.2;
 const DECK_BLEND: f32 = 1.0;
+const ROAD_REACH: f32 = 130.0;
 const CROSSING_ARC: usize = 40;
 
 const FORD_DEPTH: f32 = 1.2;
@@ -287,6 +288,7 @@ pub struct Track {
     pub rivers: Vec<Ford>,
     pub tunnels: Vec<Tunnel>,
     structures: Vec<(usize, usize)>,
+    pub dirty: Vec<(f32, f32, f32, f32)>,
     general_heading: f32,
     curvature: f32,
     phases: [f32; 3],
@@ -373,6 +375,7 @@ impl Track {
             rivers: Vec::new(),
             tunnels: Vec::new(),
             structures: Vec::new(),
+            dirty: Vec::new(),
             general_heading: 0.0,
             curvature: 0.0,
             phases,
@@ -394,6 +397,7 @@ impl Track {
     }
 
     fn push_samples(&mut self, count: usize, target_curvature: f32) {
+        let first = self.samples.len();
         for _ in 0..count {
             let previous = self.samples.last().copied().unwrap_or_default();
             let difference = (target_curvature - self.curvature).clamp(-0.018, 0.018);
@@ -436,6 +440,31 @@ impl Track {
             self.clamp_after_bend(index);
             self.register(index);
         }
+        self.touch_samples(first.saturating_sub(1), self.samples.len(), ROAD_REACH);
+    }
+
+    fn touch(&mut self, (min_x, min_z, max_x, max_z): (f32, f32, f32, f32), reach: f32) {
+        self.dirty
+            .push((min_x - reach, min_z - reach, max_x + reach, max_z + reach));
+    }
+
+    fn touch_samples(&mut self, low: usize, high: usize, reach: f32) {
+        let high = high.min(self.samples.len());
+        if low >= high {
+            return;
+        }
+        let bounds = self.samples[low..high].iter().fold(
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+            |(min_x, min_z, max_x, max_z), sample| {
+                (
+                    min_x.min(sample.x),
+                    min_z.min(sample.z),
+                    max_x.max(sample.x),
+                    max_z.max(sample.z),
+                )
+            },
+        );
+        self.touch(bounds, reach);
     }
 
     fn cell(x: f32, z: f32) -> (i32, i32) {
@@ -595,6 +624,7 @@ impl Track {
             for earlier in index.saturating_sub(reach)..index {
                 self.samples[earlier].y = self.elevation(Self::distance(earlier));
             }
+            self.touch_samples(index.saturating_sub(reach), index, ROAD_REACH);
             sample.y = self.elevation(Self::distance(index));
         }
         let reach = (BRIDGE_RAMP * 1.5 / SAMPLE) as usize;
@@ -636,6 +666,7 @@ impl Track {
     }
 
     fn mark_structure(&mut self, index: usize) {
+        self.touch_samples(index.saturating_sub(1), index + 2, ROAD_REACH);
         if let Some(span) = self
             .structures
             .iter_mut()
@@ -830,6 +861,8 @@ impl Track {
             return false;
         }
         self.ravines.push(ravine);
+        let span = RAVINE_REACH + RAVINE_FADE + ravine.half_top;
+        self.touch((ravine.x, ravine.z, ravine.x, ravine.z), span);
         let low = center.saturating_sub(12);
         let high = (center + 12).min(self.samples.len() - 1);
         for index in low..=high {
@@ -868,6 +901,7 @@ impl Track {
                     )
                 },
             );
+            self.touch(bounds, STREAM_HALF_WIDTH + STREAM_BANK + 10.0);
             self.rivers.push(Ford {
                 x: ravine.x,
                 z: ravine.z,
@@ -886,6 +920,11 @@ impl Track {
             self.mark_structure(index);
         }
         self.tunnels.push(Tunnel { start, end });
+        self.touch_samples(
+            start,
+            end,
+            TUNNEL_SHOULDER + TUNNEL_SPREAD + PORTAL_FACE + 10.0,
+        );
     }
 
     pub fn tunnel_slot(&self, x: f32, z: f32) -> bool {
@@ -1234,6 +1273,7 @@ impl Track {
             if ford {
                 let sample = self.samples[center];
                 let ford = self.build_stream(sample, sample.y + FORD_WATER, self.fords.len());
+                self.touch(ford.bounds, STREAM_HALF_WIDTH + STREAM_BANK + 10.0);
                 self.fords.push(ford);
             }
             if ravine && !self.add_ravine(middle) {

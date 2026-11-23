@@ -71,7 +71,7 @@ LATE_TEXTURES = [
     ("road_single", "single_track_dirt_road_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("verge_dirt", "grassy_dirt_*", 1, dict(kind="direct", overlap=0.1, detail=0.8)),
     ("puddle_mud", "muddy_puddle_*", 0, dict(kind="direct", overlap=0.1, detail=0.8)),
-    ("road_snow_single", "snowy_dirt_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.8, crop=(0.2, 0.0, 0.8, 1.0))),
+    ("road_snow_single", "snowy_dirt_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.8, crop=(0.0, 0.0, 0.972, 1.0))),
     ("road_snow_0", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 0, dict(kind="direct", overlap=0.1, detail=0.7)),
     ("road_snow_1", "snowy_tarmac_road_with_two_straight_tyre_tracks_*", 1, dict(kind="direct", overlap=0.1, detail=0.7, straighten=True)),
     ("barrier", "race_track_barriers_*", 0, dict(kind="direct", overlap=0.0, detail=0.9, crop=(0.0, 0.0, 1.0, 0.25), size=(64, 16))),
