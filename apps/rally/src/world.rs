@@ -12,7 +12,7 @@ use crate::render::{
 use crate::rng::{hash, hash_float, value_noise, Rng};
 use crate::sprites::band_image;
 use crate::textures::{fog_band, Atlas, Image};
-use crate::track::{NoteKind, Track, BOUNDARY, ROAD_HALF, SAMPLE};
+use crate::track::{NoteKind, Track, BOUNDARY, ROAD_HALF, SAMPLE, STRUCTURE_KERB, TUNNEL_HEIGHT};
 
 pub const VIEW_SAMPLES: usize = 68;
 const BEHIND_SAMPLES: usize = 3;
@@ -23,12 +23,17 @@ const PRECIPITATION_RADIUS: f32 = 24.0;
 const GROUND_BIAS: i32 = 160;
 const WATER_BIAS: i32 = -250;
 const BEAM_STRENGTH: f32 = 0.5;
-const KERB: f32 = 0.6;
+const TUNNEL_DARK: f32 = 0.22;
+const PORTAL_HALF: f32 = 10.0;
+const PORTAL_TOP: f32 = 8.0;
 const PARAPET: f32 = 0.9;
 const FASCIA: f32 = 1.1;
 const PIER_SPACING: usize = 4;
 const PIER_HALF: f32 = 0.45;
 const CONCRETE: Rgb = [150, 146, 138];
+const STONE_TEXELS: f32 = 24.0;
+const PORTAL_TEXELS: f32 = 12.0;
+const PIER_TEXELS: f32 = 8.0;
 const STREAM_BIAS: i32 = 60;
 const WATER_DRAW_RANGE: f32 = 260.0;
 const ROAD_BIAS: i32 = -180;
@@ -207,7 +212,8 @@ impl World {
         self.draw_ground(
             renderer, vram, atlas, art, track, from_index, window, lighting,
         );
-        self.draw_bridges(renderer, track, window, lighting);
+        self.draw_bridges(renderer, art, track, window, lighting);
+        self.draw_tunnels(renderer, art, track, window, lighting);
         self.draw_water(renderer, track, camera, window, lighting);
         self.draw_props(renderer, atlas, art, track, camera, window, lighting);
         let boulder =
@@ -219,20 +225,174 @@ impl World {
         self.draw_particles(renderer, atlas, camera, lighting);
     }
 
-    fn draw_bridges(
+    fn draw_tunnels(
         &self,
         renderer: &mut Renderer,
+        art: &Art,
         track: &Track,
         window: (usize, usize),
         lighting: Lighting,
     ) {
         let (start, end) = window;
+        let rock = tiled(&art.tunnel_wall);
+        let wall_color = |x: f32, z: f32, shade: f32| {
+            let base = [0, 1, 2].map(|c| {
+                let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * 0.4) / 255.0;
+                (128.0 * light * shade * TUNNEL_DARK * 2.0).clamp(0.0, 255.0) as u8
+            });
+            lighting.lit_by_beam(base, x, z)
+        };
+        let edge = |index: usize, side: f32, up: f32| {
+            let sample = track.sample(index);
+            let half = track.half_width(index);
+            let (rx, rz) = sample.right();
+            let lateral = (half + STRUCTURE_KERB) * side;
+            let y = sample.y + track.side_height(index, half * side) + up;
+            (sample.x + rx * lateral, y, sample.z + rz * lateral)
+        };
+        for index in start..end {
+            if !track.is_tunnel(index) {
+                continue;
+            }
+            let anchor = track.sample(index);
+            let origin = world_to_psx(anchor.x, anchor.y, anchor.z);
+            renderer.set_object(origin, Mat3Fx12::IDENTITY);
+            let local = |(x, y, z): (f32, f32, f32)| {
+                let position = world_to_psx(x, y, z);
+                Vec3i16::new(
+                    (position.x - origin.x) as i16,
+                    (position.y - origin.y) as i16,
+                    (position.z - origin.z) as i16,
+                )
+            };
+            let point = |position: (f32, f32, f32), shade: f32, uv: (u8, u8)| {
+                Point::new(
+                    local(position),
+                    wall_color(position.0, position.2, shade),
+                    uv,
+                )
+            };
+            let panels = [
+                (
+                    edge(index, -1.0, TUNNEL_HEIGHT),
+                    edge(index, -1.0, 0.0),
+                    edge(index + 1, -1.0, TUNNEL_HEIGHT),
+                    edge(index + 1, -1.0, 0.0),
+                    0.8,
+                ),
+                (
+                    edge(index, 1.0, 0.0),
+                    edge(index, 1.0, TUNNEL_HEIGHT),
+                    edge(index + 1, 1.0, 0.0),
+                    edge(index + 1, 1.0, TUNNEL_HEIGHT),
+                    0.8,
+                ),
+                (
+                    edge(index, 1.0, TUNNEL_HEIGHT),
+                    edge(index, -1.0, TUNNEL_HEIGHT),
+                    edge(index + 1, 1.0, TUNNEL_HEIGHT),
+                    edge(index + 1, -1.0, TUNNEL_HEIGHT),
+                    0.5,
+                ),
+            ];
+            for (a, b, c, d, shade) in panels {
+                let (across, along) = (
+                    (TUNNEL_HEIGHT * PORTAL_TEXELS) as u8,
+                    (SAMPLE * PORTAL_TEXELS) as u8,
+                );
+                let points = [
+                    point(a, shade, (0, 0)),
+                    point(b, shade, (across, 0)),
+                    point(c, shade, (0, along)),
+                    point(d, shade, (across, along)),
+                ];
+                renderer.polygon(&points, Surface::textured(rock.texture), ROAD_BIAS + 40, 1);
+            }
+        }
+        for tunnel in &track.tunnels {
+            for (index, facing) in [(tunnel.start, -1.0f32), (tunnel.end - 1, 1.0)] {
+                if index < start || index > end {
+                    continue;
+                }
+                let sample = track.sample(index);
+                let (fx, fz) = sample.forward();
+                let (rx, rz) = sample.right();
+                let half = track.half_width(index) + STRUCTURE_KERB;
+                let face = |lateral: f32, up: f32| {
+                    (
+                        sample.x + rx * lateral + fx * facing * 0.2,
+                        sample.y + up,
+                        sample.z + rz * lateral + fz * facing * 0.2,
+                    )
+                };
+                let origin = world_to_psx(sample.x, sample.y, sample.z);
+                renderer.set_object(origin, Mat3Fx12::IDENTITY);
+                let local = |(x, y, z): (f32, f32, f32)| {
+                    let position = world_to_psx(x, y, z);
+                    Vec3i16::new(
+                        (position.x - origin.x) as i16,
+                        (position.y - origin.y) as i16,
+                        (position.z - origin.z) as i16,
+                    )
+                };
+                let concrete = [0, 1, 2].map(|c| {
+                    let light =
+                        (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * 0.85) / 255.0;
+                    (128.0 * light).clamp(0.0, 255.0) as u8
+                });
+                let uv = |lateral: f32, up: f32| {
+                    (
+                        ((lateral + PORTAL_HALF) * PORTAL_TEXELS).clamp(0.0, 255.0) as u8,
+                        ((PORTAL_TOP - up) * PORTAL_TEXELS).clamp(0.0, 255.0) as u8,
+                    )
+                };
+                let quads = [
+                    (-PORTAL_HALF, -half, -1.0, PORTAL_TOP),
+                    (half, PORTAL_HALF, -1.0, PORTAL_TOP),
+                    (-half, half, TUNNEL_HEIGHT, PORTAL_TOP),
+                ];
+                for (left, right, bottom, top) in quads {
+                    let (left, right) = if facing < 0.0 {
+                        (left, right)
+                    } else {
+                        (right, left)
+                    };
+                    let points = [
+                        Point::new(local(face(left, top)), concrete, uv(left, top)),
+                        Point::new(local(face(right, top)), concrete, uv(right, top)),
+                        Point::new(local(face(left, bottom)), concrete, uv(left, bottom)),
+                        Point::new(local(face(right, bottom)), concrete, uv(right, bottom)),
+                    ];
+                    renderer.polygon(&points, Surface::textured(rock.texture), ROAD_BIAS + 60, 1);
+                }
+            }
+        }
+    }
+
+    fn draw_bridges(
+        &self,
+        renderer: &mut Renderer,
+        art: &Art,
+        track: &Track,
+        window: (usize, usize),
+        lighting: Lighting,
+    ) {
+        let (start, end) = window;
+        let stone = tiled(&art.stone_wall);
         let lit = |shade: f32| {
             [0, 1, 2].map(|c| {
                 let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * shade) / 255.0;
                 (CONCRETE[c] as f32 * light).clamp(0.0, 255.0) as u8
             })
         };
+        let stone_lit = |shade: f32, x: f32, z: f32| {
+            let base = [0, 1, 2].map(|c| {
+                let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * shade) / 255.0;
+                (128.0 * light).clamp(0.0, 255.0) as u8
+            });
+            lighting.lit_by_beam(base, x, z)
+        };
+        let texel = |metres: f32| (metres * STONE_TEXELS).clamp(0.0, 255.0) as u8;
         for index in start..end {
             if !track.is_deck(index) {
                 continue;
@@ -249,7 +409,7 @@ impl World {
                 )
             };
             let edge = |sample: &crate::track::Sample, sample_index: usize, side: f32| {
-                let lateral = (track.half_width(sample_index) + KERB) * side;
+                let lateral = (track.half_width(sample_index) + STRUCTURE_KERB) * side;
                 let (rx, rz) = sample.right();
                 let y = sample.y
                     + track.side_height(sample_index, track.half_width(sample_index) * side);
@@ -258,15 +418,24 @@ impl World {
             for side in [-1.0f32, 1.0] {
                 let (ax, ay, az) = edge(&a, index, side);
                 let (bx, by, bz) = edge(&b, index + 1, side);
+                let span = texel(SAMPLE);
                 for (top, bottom, shade) in [(PARAPET, 0.0, 0.9), (0.0, -FASCIA, 0.6)] {
-                    let color = lit(shade);
+                    let height = texel(top - bottom);
                     let points = [
-                        Point::new(local(ax, ay + top, az), color, (0, 0)),
-                        Point::new(local(bx, by + top, bz), color, (0, 0)),
-                        Point::new(local(ax, ay + bottom, az), color, (0, 0)),
-                        Point::new(local(bx, by + bottom, bz), color, (0, 0)),
+                        Point::new(local(ax, ay + top, az), stone_lit(shade, ax, az), (0, 0)),
+                        Point::new(local(bx, by + top, bz), stone_lit(shade, bx, bz), (span, 0)),
+                        Point::new(
+                            local(ax, ay + bottom, az),
+                            stone_lit(shade, ax, az),
+                            (0, height),
+                        ),
+                        Point::new(
+                            local(bx, by + bottom, bz),
+                            stone_lit(shade, bx, bz),
+                            (span, height),
+                        ),
                     ];
-                    renderer.polygon(&points, Surface::gouraud(), ROAD_BIAS + 20, 0);
+                    renderer.polygon(&points, Surface::textured(stone.texture), ROAD_BIAS + 20, 0);
                 }
             }
             let under = lit(0.25);
@@ -306,8 +475,10 @@ impl World {
                     ((1.0, 1.0), (1.0, -1.0), 0.5),
                     ((1.0, -1.0), (-1.0, -1.0), 0.8),
                 ];
+                let width = texel(PIER_HALF * 2.0);
+                let height = ((top - foot) * PIER_TEXELS).clamp(1.0, 255.0) as u8;
                 for ((a0, c0), (a1, c1), shade) in faces {
-                    let color = lit(shade);
+                    let color = stone_lit(shade, cx, cz);
                     let (a0, c0, a1, c1) = (
                         a0 * PIER_HALF,
                         c0 * PIER_HALF,
@@ -316,11 +487,11 @@ impl World {
                     );
                     let points = [
                         Point::new(corner(a0, c0, top), color, (0, 0)),
-                        Point::new(corner(a1, c1, top), color, (0, 0)),
-                        Point::new(corner(a0, c0, foot), color, (0, 0)),
-                        Point::new(corner(a1, c1, foot), color, (0, 0)),
+                        Point::new(corner(a1, c1, top), color, (width, 0)),
+                        Point::new(corner(a0, c0, foot), color, (0, height)),
+                        Point::new(corner(a1, c1, foot), color, (width, height)),
                     ];
-                    renderer.polygon(&points, Surface::gouraud(), 0, 0);
+                    renderer.polygon(&points, Surface::textured(stone.texture), 0, 0);
                 }
             }
         }
@@ -369,7 +540,7 @@ impl World {
         }
 
         let stream = lerp_rgb(shine, [40, 70, 80], 0.35);
-        for ford in &track.fords {
+        for ford in track.fords.iter().chain(&track.rivers) {
             if (ford.x - camera.x).hypot(ford.z - camera.z) > WATER_DRAW_RANGE {
                 continue;
             }
@@ -606,9 +777,9 @@ impl World {
                 let sample = track.sample(index);
                 let (rx, rz) = sample.right();
                 let half = track.half_width(index);
-                let deck = track.is_deck(index);
+                let deck = track.is_structure(index);
                 let outer = [if deck {
-                    half + KERB
+                    half + STRUCTURE_KERB
                 } else {
                     track.shoulder(index)
                 }];
@@ -645,6 +816,11 @@ impl World {
                 let textured = index.abs_diff(from_index) < TEXTURED_SAMPLES;
                 let near_row = index.abs_diff(from_index) <= 3;
                 let row_depth = (centres[row] as u32 + centres[row + 1] as u32) / 2;
+                let darkness = if track.is_tunnel(index) {
+                    TUNNEL_DARK
+                } else {
+                    1.0
+                };
                 let (a, b, t) = track.biomes.at(Track::distance(index));
                 let key = hash_float(track.seed ^ 0x90ad, index as u64 / 2, 0);
                 let pick = |kind: Kind, first: Image, second: Image, tile: bool| match art
@@ -724,7 +900,11 @@ impl World {
                     let v1 = v0 + 31;
                     let corner = |r: usize, s: usize, u: u8, v: u8| {
                         let (position, shade, _, x, z) = sections[r][s];
-                        let lit = lighting.lit_by_beam(light(shade * shade_scale), x, z);
+                        let lit = lighting.lit_by_beam(
+                            scale_rgb(light(shade * shade_scale), darkness),
+                            x,
+                            z,
+                        );
                         let color = if textured {
                             lit
                         } else {
@@ -795,7 +975,7 @@ impl World {
         };
 
         for index in start..end {
-            if track.is_deck(index) {
+            if track.is_structure(index) {
                 continue;
             }
             let sample = track.sample(index);

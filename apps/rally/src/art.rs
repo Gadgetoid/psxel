@@ -60,6 +60,8 @@ pub struct Art {
     pub leaves: Image,
     pub snow_ground: Image,
     pub earth: Image,
+    pub stone_wall: Image,
+    pub tunnel_wall: Image,
     pub rock_texture: Image,
     pub horizon_forest: Image,
     pub horizon_farmland: Image,
@@ -114,6 +116,8 @@ impl Art {
         let leaves = sheet.add(vram, sprite!("ground_leaves"), false);
         let snow_ground = sheet.add(vram, sprite!("ground_snow"), false);
         let earth = sheet.add(vram, sprite!("ground_earth"), false);
+        let stone_wall = sheet.add(vram, sprite!("wall_stone"), false);
+        let tunnel_wall = sheet.add(vram, sprite!("wall_tunnel"), false);
         let rock_texture = sheet.add(vram, sprite!("rock_texture"), false);
         let cliff_desert = family!(
             sheet,
@@ -222,6 +226,8 @@ impl Art {
             leaves,
             snow_ground,
             earth,
+            stone_wall,
+            tunnel_wall,
             rock_texture,
             horizon_forest,
             horizon_farmland,

@@ -38,6 +38,7 @@ pub enum NoteKind {
     Jump,
     Ford,
     Bridge,
+    Tunnel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +99,7 @@ impl PaceNote {
             NoteKind::Jump => words.push("JUMP!".into()),
             NoteKind::Ford => words.push("WATER SPLASH".into()),
             NoteKind::Bridge => words.push("OVER BRIDGE".into()),
+            NoteKind::Tunnel => words.push("TUNNEL".into()),
         }
         words.join(" ")
     }
@@ -113,6 +115,7 @@ pub struct Sample {
     pub clearance: [f32; 2],
     pub fold: [f32; 2],
     pub deck: bool,
+    pub tunnel: bool,
 }
 
 impl Sample {
@@ -194,10 +197,40 @@ pub struct Crossing {
     pub old_upper: bool,
 }
 
-pub struct DeckHit {
+pub struct StructureHit {
     pub height: f32,
     pub road: RoadPoint,
+    pub tunnel: bool,
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct Ravine {
+    pub x: f32,
+    pub z: f32,
+    pub line: (f32, f32),
+    pub road_y: f32,
+    pub depth: f32,
+    pub half_top: f32,
+    pub half_bed: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Tunnel {
+    pub start: usize,
+    pub end: usize,
+}
+
+pub const STRUCTURE_KERB: f32 = 0.6;
+pub const TUNNEL_HEIGHT: f32 = 5.0;
+const RAVINE_CHANCE: f32 = 0.2;
+const RAVINE_REACH: f32 = 120.0;
+const RAVINE_FADE: f32 = 30.0;
+const RAVINE_RIVER_CHANCE: f32 = 0.5;
+const TUNNEL_CHANCE: f32 = 0.35;
+const TUNNEL_COVER: f32 = 9.0;
+const TUNNEL_SHOULDER: f32 = 14.0;
+const TUNNEL_SPREAD: f32 = 45.0;
+const PORTAL_FACE: f32 = 6.0;
 
 const BRIDGE_CLEARANCE: f32 = 7.5;
 const BRIDGE_RAMP: f32 = 42.0;
@@ -224,6 +257,10 @@ pub struct Track {
     bumps: Vec<Bump>,
     pub fords: Vec<Ford>,
     pub crossings: Vec<Crossing>,
+    pub ravines: Vec<Ravine>,
+    pub rivers: Vec<Ford>,
+    pub tunnels: Vec<Tunnel>,
+    structures: Vec<(usize, usize)>,
     general_heading: f32,
     curvature: f32,
     phases: [f32; 3],
@@ -306,6 +343,10 @@ impl Track {
             bumps: Vec::new(),
             fords: Vec::new(),
             crossings: Vec::new(),
+            ravines: Vec::new(),
+            rivers: Vec::new(),
+            tunnels: Vec::new(),
+            structures: Vec::new(),
             general_heading: 0.0,
             curvature: 0.0,
             phases,
@@ -355,10 +396,15 @@ impl Track {
                 clearance: [MAX_TERRAIN; 2],
                 fold: [MAX_TERRAIN; 2],
                 deck: false,
+                tunnel: false,
             };
             sample.y = self.elevation(Self::distance(index));
             self.detect_crossing(index, &mut sample);
-            sample.deck = self.over_crossing(&sample, Self::distance(index));
+            sample.deck =
+                self.over_crossing(&sample, Self::distance(index)) || self.over_ravine(&sample);
+            if sample.deck {
+                self.mark_structure(index);
+            }
             self.samples.push(sample);
             self.clamp_inside_of_bend(index);
             self.clamp_after_bend(index);
@@ -528,8 +574,12 @@ impl Track {
         let reach = (BRIDGE_RAMP * 1.5 / SAMPLE) as usize;
         for earlier in index.saturating_sub(reach)..index {
             let previous = self.samples[earlier];
-            let deck = self.over_crossing(&previous, Self::distance(earlier));
+            let deck = self.over_crossing(&previous, Self::distance(earlier))
+                || self.over_ravine(&previous);
             self.samples[earlier].deck = deck;
+            if deck {
+                self.mark_structure(earlier);
+            }
         }
     }
 
@@ -543,50 +593,60 @@ impl Track {
             }
             let low = crossing.old.saturating_sub(12);
             let high = (crossing.old + 12).min(self.samples.len() - 1);
-            for old in &mut self.samples[low..=high] {
+            for old_index in low..=high {
+                let old = self.samples[old_index];
                 if (old.x - sample.x).hypot(old.z - sample.z) >= DECK_REACH {
                     continue;
                 }
                 if sample.y - old.y > DECK_RISE {
                     deck = true;
                 } else if old.y - sample.y > DECK_RISE {
-                    old.deck = true;
+                    self.samples[old_index].deck = true;
+                    self.mark_structure(old_index);
                 }
             }
         }
         deck
     }
 
-    pub fn deck_at(&self, x: f32, z: f32) -> Option<DeckHit> {
-        for crossing in &self.crossings {
-            let new_low = (crossing.center / SAMPLE) as usize;
-            let new_high = (crossing.end / SAMPLE) as usize;
-            let spans = [
-                (new_low.saturating_sub(16), new_high + 16),
-                (crossing.old.saturating_sub(40), crossing.old + 16),
-            ];
-            for (low, high) in spans {
-                let high = high.min(self.samples.len().saturating_sub(2));
-                let near = (low..high).step_by(8).any(|index| {
-                    let anchor = self.samples[index];
-                    (anchor.x - x).hypot(anchor.z - z) < SAMPLE * 8.0 + DECK_REACH
-                });
-                if !near {
+    fn mark_structure(&mut self, index: usize) {
+        if let Some(span) = self
+            .structures
+            .iter_mut()
+            .find(|(low, high)| index + 24 >= *low && index <= *high + 24)
+        {
+            span.0 = span.0.min(index);
+            span.1 = span.1.max(index + 1);
+        } else {
+            self.structures.push((index, index + 1));
+        }
+    }
+
+    pub fn structure_at(&self, x: f32, z: f32, margin: f32) -> Option<StructureHit> {
+        for &(low, high) in &self.structures {
+            let low = low.saturating_sub(2);
+            let high = (high + 2).min(self.samples.len().saturating_sub(2));
+            let near = (low..=high).step_by(6).chain([high]).any(|index| {
+                let anchor = self.samples[index];
+                (anchor.x - x).hypot(anchor.z - z) < SAMPLE * 6.0 + DECK_REACH
+            });
+            if !near {
+                continue;
+            }
+            for index in low..high {
+                let point = self.project(index, x, z);
+                let half = self.half_width(point.index);
+                if !self.is_structure(point.index)
+                    || point.overshoot > 0.01
+                    || point.lateral.abs() > half + STRUCTURE_KERB + margin
+                {
                     continue;
                 }
-                for index in low..high {
-                    let point = self.project(index, x, z);
-                    if !self.is_deck(point.index)
-                        || point.overshoot > 0.01
-                        || point.lateral.abs() > self.half_width(point.index) + 0.4
-                    {
-                        continue;
-                    }
-                    return Some(DeckHit {
-                        height: self.ground(point.index, point.t, point.lateral),
-                        road: point,
-                    });
-                }
+                return Some(StructureHit {
+                    height: self.ground(point.index, point.t, point.lateral.clamp(-half, half)),
+                    road: point,
+                    tunnel: self.is_tunnel(point.index),
+                });
             }
         }
         None
@@ -597,14 +657,165 @@ impl Track {
         self.samples[index].deck || self.samples[next].deck
     }
 
+    pub fn is_tunnel(&self, index: usize) -> bool {
+        let next = (index + 1).min(self.samples.len() - 1);
+        self.samples[index].tunnel && self.samples[next].tunnel
+    }
+
+    pub fn is_structure(&self, index: usize) -> bool {
+        self.is_deck(index) || self.is_tunnel(index)
+    }
+
     pub fn surface(&self, x: f32, z: f32, y: f32) -> (f32, Option<RoadPoint>) {
         let terrain = self.terrain(x, z);
-        match self.deck_at(x, z) {
-            Some(deck) if deck.height < y + DECK_STEP_UP && deck.height > terrain.height => {
-                (deck.height, Some(deck.road))
+        match self.structure_at(x, z, 0.0) {
+            Some(hit)
+                if hit.height < y + DECK_STEP_UP
+                    && (hit.height > terrain.height || terrain.height > y + DECK_STEP_UP) =>
+            {
+                (hit.height, Some(hit.road))
             }
             _ => (terrain.height, terrain.road),
         }
+    }
+
+    fn ravine_profile(ravine: &Ravine, x: f32, z: f32) -> Option<(f32, f32)> {
+        let (dx, dz) = (x - ravine.x, z - ravine.z);
+        let along = dx * ravine.line.0 + dz * ravine.line.1;
+        let across = (dx * ravine.line.1 - dz * ravine.line.0).abs();
+        if along.abs() > RAVINE_REACH + RAVINE_FADE || across > ravine.half_top {
+            return None;
+        }
+        let wall =
+            ((across - ravine.half_bed) / (ravine.half_top - ravine.half_bed)).clamp(0.0, 1.0);
+        let wall = wall * wall * (3.0 - 2.0 * wall);
+        let floor = ravine.road_y - ravine.depth;
+        let target = floor + (ravine.road_y + 3.0 - floor) * wall.powf(0.6);
+        let end = ((along.abs() - RAVINE_REACH) / RAVINE_FADE).clamp(0.0, 1.0);
+        Some((target, 1.0 - end * end * (3.0 - 2.0 * end)))
+    }
+
+    fn over_ravine(&self, sample: &Sample) -> bool {
+        self.ravines.iter().any(|ravine| {
+            Self::ravine_profile(ravine, sample.x, sample.z)
+                .is_some_and(|(target, weight)| weight > 0.5 && target < sample.y - DECK_RISE)
+        })
+    }
+
+    fn add_ravine(&mut self, center: usize) -> bool {
+        let sample = self.samples[center];
+        let (fx, fz) = sample.forward();
+        let key = crate::rng::hash(self.seed ^ 0x2a71, center as u64, 0);
+        let ravine = Ravine {
+            x: sample.x,
+            z: sample.z,
+            line: sample.right(),
+            road_y: sample.y,
+            depth: 10.0 + crate::rng::hash_float(key, 1, 0) * 14.0,
+            half_top: 13.0 + crate::rng::hash_float(key, 2, 0) * 7.0,
+            half_bed: 3.0 + crate::rng::hash_float(key, 3, 0) * 2.0,
+        };
+        let blocked = self.samples.iter().enumerate().any(|(index, other)| {
+            if index.abs_diff(center) < 30 {
+                return false;
+            }
+            let (dx, dz) = (other.x - ravine.x, other.z - ravine.z);
+            let along = dx * ravine.line.0 + dz * ravine.line.1;
+            let across = dx * fx + dz * fz;
+            along.abs() < RAVINE_REACH + RAVINE_FADE + 10.0 && across.abs() < ravine.half_top + 20.0
+        });
+        if blocked {
+            return false;
+        }
+        self.ravines.push(ravine);
+        let low = center.saturating_sub(12);
+        let high = (center + 12).min(self.samples.len() - 1);
+        for index in low..=high {
+            let other = self.samples[index];
+            if self.over_ravine(&other) {
+                self.samples[index].deck = true;
+                self.mark_structure(index);
+            }
+        }
+        if crate::rng::hash_float(key, 4, 0) < RAVINE_RIVER_CHANCE {
+            let floor = ravine.road_y - ravine.depth;
+            let level = floor + 0.5;
+            let path: Vec<StreamPoint> = (-20..=20)
+                .map(|step| {
+                    let along = step as f32 * 6.0;
+                    let (x, z) = (
+                        ravine.x + ravine.line.0 * along,
+                        ravine.z + ravine.line.1 * along,
+                    );
+                    StreamPoint {
+                        x,
+                        z,
+                        surface: floor.min(self.terrain_raw(x, z).height) + 0.4,
+                        width: ravine.half_bed - 0.5,
+                    }
+                })
+                .collect();
+            let bounds = path.iter().fold(
+                (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+                |(min_x, min_z, max_x, max_z), point| {
+                    (
+                        min_x.min(point.x),
+                        min_z.min(point.z),
+                        max_x.max(point.x),
+                        max_z.max(point.z),
+                    )
+                },
+            );
+            self.rivers.push(Ford {
+                x: ravine.x,
+                z: ravine.z,
+                level,
+                crossing: usize::MAX,
+                path,
+                bounds,
+            });
+        }
+        true
+    }
+
+    fn add_tunnel(&mut self, start: usize, end: usize) {
+        for index in start..end {
+            self.samples[index].tunnel = true;
+            self.mark_structure(index);
+        }
+        self.tunnels.push(Tunnel { start, end });
+    }
+
+    pub fn tunnel_hill(&self, x: f32, z: f32) -> bool {
+        self.tunnels
+            .iter()
+            .any(|tunnel| self.tunnel_cover(tunnel, x, z).is_some())
+    }
+
+    fn tunnel_cover(&self, tunnel: &Tunnel, x: f32, z: f32) -> Option<f32> {
+        let middle = self.samples[(tunnel.start + tunnel.end) / 2];
+        let half_length = (tunnel.end - tunnel.start) as f32 * SAMPLE * 0.5;
+        let reach = half_length + TUNNEL_SHOULDER + TUNNEL_SPREAD + 20.0;
+        if (middle.x - x).hypot(middle.z - z) > reach {
+            return None;
+        }
+        let low = tunnel.start.saturating_sub(3);
+        let high = (tunnel.end + 3).min(self.samples.len() - 2);
+        let point = (low..high)
+            .map(|index| self.project(index, x, z))
+            .min_by(|a, b| a.distance.total_cmp(&b.distance))?;
+        let position = Self::distance(point.index) + point.t * SAMPLE;
+        let (first, last) = (Self::distance(tunnel.start), Self::distance(tunnel.end - 1));
+        let outside = (first - position).max(position - last).max(0.0) + point.overshoot;
+        let face = (1.0 - outside / PORTAL_FACE).clamp(0.0, 1.0);
+        let side = ((point.lateral.abs() - TUNNEL_SHOULDER) / TUNNEL_SPREAD).clamp(0.0, 1.0);
+        let side = 1.0 - side * side * (3.0 - 2.0 * side);
+        let weight = face * side;
+        if weight <= 0.0 {
+            return None;
+        }
+        let road = self.ground(point.index, point.t, 0.0);
+        Some(road + TUNNEL_COVER * weight.sqrt())
     }
 
     fn preview_clear(&self, count: usize, target_curvature: f32) -> bool {
@@ -845,11 +1056,57 @@ impl Track {
                     into: false,
                 });
             }
+            let roll = crate::rng::hash_float(self.seed ^ 0x7a1e, start as u64, 1);
+            let hilliness = self
+                .biomes
+                .scalar(Self::distance(center), |biome| biome.hilliness);
+            let ravine = !bump && !ford && length >= 16 && start > 60 && roll < RAVINE_CHANCE;
+            let tunnel = !bump
+                && !ford
+                && !ravine
+                && length >= 16
+                && start > 60
+                && hilliness >= 1.0
+                && roll > 1.0 - TUNNEL_CHANCE;
+            let middle = start + length / 2;
+            if ravine {
+                self.notes.push(PaceNote {
+                    start: middle.saturating_sub(8),
+                    end: middle.saturating_sub(3),
+                    kind: NoteKind::Bridge,
+                    long: false,
+                    tightens: false,
+                    into: false,
+                });
+            }
+            if tunnel {
+                self.notes.push(PaceNote {
+                    start: start + 2,
+                    end: start + 3,
+                    kind: NoteKind::Tunnel,
+                    long: length >= 28,
+                    tightens: false,
+                    into: false,
+                });
+            }
             self.push_samples(length, 0.0);
             if ford {
                 let sample = self.samples[center];
                 let ford = self.build_stream(sample, sample.y + FORD_WATER, self.fords.len());
                 self.fords.push(ford);
+            }
+            if ravine && !self.add_ravine(middle) {
+                let bridge_end = middle.saturating_sub(3);
+                if let Some(index) = self
+                    .notes
+                    .iter()
+                    .rposition(|note| note.kind == NoteKind::Bridge && note.end == bridge_end)
+                {
+                    self.notes.remove(index);
+                }
+            }
+            if tunnel {
+                self.add_tunnel(start + 3, start + length - 3);
             }
             return;
         }
@@ -903,7 +1160,17 @@ impl Track {
 
     pub fn terrain(&self, x: f32, z: f32) -> Terrain {
         let mut terrain = self.terrain_raw(x, z);
-        for ford in &self.fords {
+        for ravine in &self.ravines {
+            if let Some((target, weight)) = Self::ravine_profile(ravine, x, z) {
+                terrain.height += (terrain.height.min(target) - terrain.height) * weight;
+            }
+        }
+        for tunnel in &self.tunnels {
+            if let Some(cover) = self.tunnel_cover(tunnel, x, z) {
+                terrain.height = terrain.height.max(cover);
+            }
+        }
+        for ford in self.fords.iter().chain(&self.rivers) {
             let Some(hit) = Self::stream_hit(ford, x, z, STREAM_BANK) else {
                 continue;
             };
@@ -1045,6 +1312,7 @@ impl Track {
     pub fn water_at(&self, x: f32, z: f32) -> Option<f32> {
         self.fords
             .iter()
+            .chain(&self.rivers)
             .find_map(|ford| Self::stream_hit(ford, x, z, 0.0))
             .map(|hit| hit.surface)
     }
@@ -1105,7 +1373,7 @@ impl Track {
                             continue;
                         }
                         let point = self.project(index, x, z);
-                        if self.is_deck(point.index) {
+                        if self.is_structure(point.index) {
                             continue;
                         }
                         if !points.iter().any(|existing| existing.index == point.index) {
@@ -1535,6 +1803,51 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn ravines_and_tunnels_are_bridged_and_covered() {
+        let (mut ravines, mut tunnels) = (0, 0);
+        for seed in 0..12u64 {
+            let mut track = Track::new(seed);
+            track.ensure(4000);
+            ravines += track.ravines.len();
+            tunnels += track.tunnels.len();
+            for ravine in &track.ravines {
+                let (x, z) = (ravine.x, ravine.z);
+                let terrain = track.terrain(x, z).height;
+                assert!(terrain < ravine.road_y - ravine.depth * 0.6, "{terrain}");
+                let (deck, road) = track.surface(x, z, ravine.road_y + 0.5);
+                assert!(
+                    road.is_some() && (deck - ravine.road_y).abs() < 1.0,
+                    "{deck}"
+                );
+            }
+            for river in &track.rivers {
+                for point in &river.path {
+                    let ground = track.terrain(point.x, point.z).height;
+                    assert!(point.surface < ground + 1.0, "{} {ground}", point.surface);
+                }
+            }
+            for tunnel in &track.tunnels {
+                for index in tunnel.start + 1..tunnel.end - 1 {
+                    let sample = track.samples[index];
+                    let cover = track.terrain(sample.x, sample.z).height;
+                    assert!(
+                        cover > sample.y + TUNNEL_HEIGHT,
+                        "seed {seed} {index}: {cover} {}",
+                        sample.y
+                    );
+                    let (inside, _) = track.surface(sample.x, sample.z, sample.y + 0.5);
+                    assert!(
+                        (inside - sample.y).abs() < 0.6,
+                        "seed {seed} {index}: {inside}"
+                    );
+                }
+            }
+        }
+        eprintln!("ravines {ravines} tunnels {tunnels}");
+        assert!(ravines > 3 && tunnels > 3, "{ravines} {tunnels}");
     }
 
     #[test]

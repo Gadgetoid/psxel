@@ -60,6 +60,11 @@ LATE_SPRITES = [
     ("hay", "hay_bales_*", (64, 48), SOLID, None),
 ]
 
+LATE_TEXTURES = [
+    ("wall_stone", "drystone_wall_*", 1, dict(kind="direct", overlap=0.1, detail=0.8)),
+    ("wall_tunnel", "tunnel_wall_*", 2, dict(kind="direct", overlap=0.1, detail=0.8)),
+]
+
 LATE_ROADS = [
     ("road_mud", "muddy_road_with_tyre_ruts_*", dict(kind="direct", overlap=0.15, detail=0.8)),
 ]
@@ -746,6 +751,9 @@ def build_all(source_dir):
     for prefix, pattern, settings in LATE_ROADS:
         for index, source in enumerate(find_sources(source_dir, pattern, None)):
             written.append(save(road_texture(source, settings, None, None), "%s_%d" % (prefix, index)))
+    for name, pattern, variant, settings in LATE_TEXTURES:
+        source = find_sources(source_dir, pattern, None)[variant]
+        written.append(save(road_texture(source, settings, None, None), name))
     return written
 
 

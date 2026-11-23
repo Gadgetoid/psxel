@@ -519,8 +519,13 @@ impl Rally {
         let height = if title { 2.6 } else { 2.7 } + self.camera_lift;
         let mut x = car.x - fx * back;
         let mut z = car.z - fz * back;
-        let terrain = self.track.terrain(x, z).height;
-        let mut y = (car.y + height).max(terrain + 1.2);
+        let ground = self.track.surface(x, z, car.y + 1.0).0;
+        let mut y = (car.y + height).max(ground + 1.2);
+        if let Some(hit) = self.track.structure_at(x, z, 1.0) {
+            if hit.tunnel && car.y < hit.height + track::TUNNEL_HEIGHT {
+                y = y.min(hit.height + track::TUNNEL_HEIGHT - 0.6);
+            }
+        }
         let mut rng = Rng::new(self.frame as u64);
         if self.shake > 0.0 {
             x += rng.range(-1.0, 1.0) * self.shake;
@@ -1058,7 +1063,11 @@ impl Game for Rally {
         } else {
             (BIOMES[b].weather, t * 2.0 - 1.0)
         };
-        let weather = if self.state == State::Title && weather == Weather::Rain {
+        let sheltered = self
+            .track
+            .structure_at(self.camera.x, self.camera.z, 1.0)
+            .is_some_and(|hit| hit.tunnel && self.camera.y < hit.height + track::TUNNEL_HEIGHT);
+        let weather = if (self.state == State::Title && weather == Weather::Rain) || sheltered {
             Weather::Clear
         } else {
             weather
@@ -1186,11 +1195,13 @@ fn draw_shadow(renderer: &mut Renderer, car: &Car, world: &World, track: &Track,
         let z = car.z + fz * forward + rz * side;
         (
             x,
-            world
-                .landscape
-                .height_at(track, x, z)
-                .max(track.surface(x, z, car.y).0)
-                + 0.06,
+            match track.structure_at(x, z, 0.5) {
+                Some(_) => track.surface(x, z, car.y + 0.5).0,
+                None => world
+                    .landscape
+                    .height_at(track, x, z)
+                    .max(track.terrain(x, z).height),
+            } + 0.06,
             z,
         )
     };
@@ -1288,9 +1299,9 @@ mod tests {
                 }
                 let car = &rally.car;
                 let index = car.index;
-                let ground = rally.track.terrain(car.x, car.z).height;
+                let ground = rally.track.surface(car.x, car.z, car.y + 0.5).0;
                 let camera = rally.camera;
-                let camera_ground = rally.track.terrain(camera.x, camera.z).height;
+                let camera_ground = rally.track.surface(camera.x, camera.z, camera.y).0;
                 let problem = if car.y < ground - 1.0 {
                     Some(format!("car below ground by {:.1}", ground - car.y))
                 } else if camera.y < camera_ground + 0.3 {

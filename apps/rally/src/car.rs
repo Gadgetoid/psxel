@@ -5,7 +5,7 @@ use crate::biome::Rgb;
 use crate::livery::{CarAtlas, BODY_FRONT, BODY_REAR};
 use crate::render::{angle, world_to_psx, Point, Renderer, Surface};
 use crate::textures::Image;
-use crate::track::Track;
+use crate::track::{Track, STRUCTURE_KERB};
 
 pub const DT: f32 = 1.0 / 60.0;
 const GRAVITY: f32 = 18.0;
@@ -16,6 +16,9 @@ const WHEELBASE: f32 = 2.6;
 const MAX_STEER: f32 = 0.55;
 const CAR_BIAS: i32 = -420;
 const WHEEL_BIAS: i32 = 40;
+const BODY_HALF_WIDTH: f32 = 0.85;
+const WALL_BOUNCE: f32 = 0.3;
+const WALL_SCRUB: f32 = 0.92;
 const MAX_ROLL: f32 = 0.35;
 const WHEEL_OFFSET_FORWARD: f32 = 1.2;
 const WHEEL_OFFSET_SIDE: f32 = 0.8;
@@ -306,6 +309,24 @@ impl Car {
         self.heading += self.yaw_rate * DT;
         self.x += self.velocity.0 * DT;
         self.z += self.velocity.1 * DT;
+        if let Some(hit) = track.structure_at(self.x, self.z, 3.0) {
+            let limit = track.half_width(hit.road.index) + STRUCTURE_KERB - BODY_HALF_WIDTH;
+            let excess = hit.road.lateral.abs() - limit;
+            if excess > 0.0 && (self.y - hit.height).abs() < 2.5 {
+                let (rx, rz) = track.sample(hit.road.index).right();
+                let side = hit.road.lateral.signum();
+                self.x -= rx * side * excess;
+                self.z -= rz * side * excess;
+                let outward = (self.velocity.0 * rx + self.velocity.1 * rz) * side;
+                if outward > 0.0 {
+                    self.velocity.0 -= rx * side * outward * (1.0 + WALL_BOUNCE);
+                    self.velocity.1 -= rz * side * outward * (1.0 + WALL_BOUNCE);
+                    self.velocity.0 *= WALL_SCRUB;
+                    self.velocity.1 *= WALL_SCRUB;
+                    events.impact = events.impact.max(outward);
+                }
+            }
+        }
 
         let (fx, fz) = self.forward();
         let (rx, rz) = self.right();

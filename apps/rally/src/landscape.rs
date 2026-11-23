@@ -79,7 +79,7 @@ impl Landscape {
             .map(|road| (road.index as u32, road.distance))
             .unwrap_or((u32::MAX, f32::MAX));
         let mut height = terrain.height;
-        if let Some(road) = terrain.road {
+        if let Some(road) = terrain.road.filter(|_| !track.tunnel_hill(x, z)) {
             let half = track.half_width(road.index);
             let shoulder = track.shoulder(road.index);
             let road_y = track.ground(road.index, road.t, 0.0);
@@ -348,7 +348,7 @@ impl Landscape {
                         continue;
                     }
                 }
-                if track.deck_at(x, z).is_some() {
+                if track.structure_at(x, z, 2.0).is_some() {
                     continue;
                 }
                 if vertex.road_index == u32::MAX {
