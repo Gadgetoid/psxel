@@ -1,0 +1,66 @@
+bar 2.4000
+slot 2.7000
+bars 72
+strip pads horn music_pads_horn 10
+order pads horn 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 4 4 5 5 6 6 7 7 8 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 9 0 1 1 2 2 3 3
+strip pads organ music_pads_organ 10
+order pads organ 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 4 4 5 5 6 6 7 7 8 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 9 0 1 1 2 2 3 3
+strip pads pluck music_pads_pluck 5
+order pads pluck 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 4 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 0 1 1 2 2 3 3
+strip bass saw music_bass_saw 13
+order bass saw -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 8 9 10 11 8 9 10 11 8 9 10 11 8 9 10 12 -1 -1 -1 -1 -1 -1 -1 -1 8 9 10 11 8 9 10 11 8 9 10 11 8 9 10 11 0 1 2 3 4 5 6 6
+strip bass sine music_bass_sine 13
+order bass sine -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 4 5 6 7 0 1 2 3 4 5 6 7 8 9 10 11 8 9 10 11 8 9 10 11 8 9 10 12 -1 -1 -1 -1 -1 -1 -1 -1 8 9 10 11 8 9 10 11 8 9 10 11 8 9 10 11 0 1 2 3 4 5 6 6
+strip arpeggio pulse music_arpeggio_pulse 4
+order arpeggio pulse -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3
+strip arpeggio bells music_arpeggio_bells 4
+order arpeggio bells -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3
+strip arpeggio saw music_arpeggio_saw 4
+order arpeggio saw -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3
+strip lead saw music_lead_saw 4
+order lead saw -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1
+strip lead square music_lead_square 4
+order lead square -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1
+strip lead twinkle music_lead_twinkle 4
+order lead twinkle -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1
+strip lead rush music_lead_rush 4
+order lead rush -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1
+strip lead oud music_lead_oud 6
+order lead oud -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 4 5 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 4 5 -1 -1 -1 -1 -1 -1 -1
+strip lead saw_b music_lead_saw_b 4
+order lead saw_b -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1
+strip lead square_b music_lead_square_b 4
+order lead square_b -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1
+strip lead twinkle_b music_lead_twinkle_b 6
+order lead twinkle_b -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 4 5 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 4 5 -1 -1 -1 -1 -1 -1 -1
+strip lead rush_b music_lead_rush_b 4
+order lead rush_b -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 -1 -1 -1 -1 -1 -1 -1 -1
+strip lead oud_b music_lead_oud_b 6
+order lead oud_b -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 4 5 -1 -1 -1 -1 -1 -1 -1 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 4 5 -1 -1 -1 -1 -1 -1 -1
+strip rhythm chug music_rhythm_chug 4
+order rhythm chug 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3
+strip rhythm pluck music_rhythm_pluck 4
+order rhythm pluck 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3 0 1 2 3 0 1 2 3 0 1 2 3 0 1 2 3 0 0 1 1 2 2 3 3
+strip drums full music_drums_full 20
+order drums full 0 1 1 2 3 1 1 4 5 6 6 7 8 6 6 9 8 6 6 7 8 6 6 9 10 11 11 12 13 11 11 14 13 11 11 12 13 11 11 14 15 -1 -1 -1 -1 -1 16 17 18 11 11 12 13 11 11 14 13 11 11 12 13 11 11 14 5 6 6 7 8 6 6 19
+strip drums light music_drums_light 20
+order drums light 0 1 1 2 3 1 1 4 5 6 6 7 8 6 6 9 8 6 6 7 8 6 6 9 10 11 11 12 13 11 11 14 13 11 11 12 13 11 11 14 15 -1 -1 -1 -1 -1 16 17 18 11 11 12 13 11 11 14 13 11 11 12 13 11 11 14 5 6 6 7 8 6 6 19
+gain arpeggio 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.041 0.085 0.129 0.172 0.216 0.260 0.303 0.347 0.391 0.435 0.478 0.522 0.566 0.610 0.653 0.697 0.747 0.797 0.847 0.897 0.947 0.997 1.000 0.700 0.435 0.473 0.510 0.548 0.585 0.623 0.660 0.698 0.735 0.773 0.810 0.848 0.885 0.923 0.960 0.998 0.800 0.700 0.600 0.500 0.400 0.300 0.200 0.100
+style 0 pads=horn bass=saw arpeggio=pulse lead=saw drums=full rhythm=chug
+style 1 pads=organ bass=saw arpeggio=saw lead=square drums=full rhythm=chug
+style 2 pads=pluck bass=saw arpeggio=bells lead=oud drums=full rhythm=pluck
+style 3 pads=horn bass=sine arpeggio=bells lead=twinkle drums=full rhythm=chug
+style 4 pads=organ bass=sine arpeggio=pulse lead=saw drums=full rhythm=chug
+style 5 pads=pluck bass=sine arpeggio=bells lead=square drums=light rhythm=pluck
+night 0 pads=pluck bass=sine arpeggio=bells lead=twinkle drums=light rhythm=pluck
+night 1 pads=organ bass=sine arpeggio=pulse lead=twinkle drums=light rhythm=pluck
+night 2 pads=pluck bass=sine arpeggio=bells lead=oud drums=light rhythm=pluck
+night 3 pads=horn bass=sine arpeggio=bells lead=twinkle drums=light rhythm=pluck
+night 4 pads=pluck bass=sine arpeggio=saw lead=square drums=light rhythm=pluck
+night 5 pads=pluck bass=sine arpeggio=pulse lead=twinkle drums=light rhythm=pluck
+dawn 0 pads=horn bass=saw arpeggio=bells lead=twinkle drums=light rhythm=chug
+dawn 1 pads=organ bass=saw arpeggio=bells lead=square drums=light rhythm=chug
+dawn 2 pads=horn bass=saw arpeggio=bells lead=oud drums=light rhythm=pluck
+dawn 3 pads=horn bass=sine arpeggio=bells lead=twinkle drums=full rhythm=chug
+dawn 4 pads=horn bass=saw arpeggio=bells lead=saw drums=light rhythm=chug
+dawn 5 pads=pluck bass=saw arpeggio=bells lead=twinkle drums=light rhythm=pluck

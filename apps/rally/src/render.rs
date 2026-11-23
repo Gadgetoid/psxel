@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use psxel_math::{Gte, Mat3Fx12, Projected, Vec3i16, Vec3i32, FULL_TURN};
 use psxel_prim::{exceeds_gpu_limits, BlendMode, OrderingTable, Primitive, Texture, Vertex};
 
@@ -14,9 +16,20 @@ pub const OT_SHIFT: u32 = 4;
 pub const FOG_NEAR: f32 = 25.0;
 pub const FOG_FAR: f32 = 260.0;
 
+static FOG_SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+pub fn set_fog_scale(scale: f32) {
+    FOG_SCALE.store(scale.to_bits(), Ordering::Relaxed);
+}
+
+pub fn fog_scale() -> f32 {
+    f32::from_bits(FOG_SCALE.load(Ordering::Relaxed))
+}
+
 pub fn fog_amount(distance: f32) -> f32 {
-    let near = 1.0 / FOG_NEAR;
-    let far = 1.0 / FOG_FAR;
+    let scale = fog_scale();
+    let near = 1.0 / (FOG_NEAR * scale);
+    let far = 1.0 / (FOG_FAR * scale);
     ((near - 1.0 / distance.max(0.01)) / (near - far)).clamp(0.0, 1.0)
 }
 
@@ -128,6 +141,7 @@ pub struct Renderer {
     camera_position: Vec3i32,
     pub fog: Rgb,
     pub fog_enabled: bool,
+    fog_scale: f32,
     pub force_bucket: Option<usize>,
     pub force_otz: Option<u32>,
     pub polygons: usize,
@@ -143,12 +157,7 @@ impl Renderer {
             zsf4: (4096 / 4) as i16,
             ..Default::default()
         };
-        let divisor =
-            |meters: f32| PROJECTION_H as f64 * 65536.0 / (meters as f64 * UNITS_PER_METER as f64);
-        let (near, far) = (divisor(FOG_NEAR), divisor(FOG_FAR));
-        let dqa = (4096.0 * 4096.0 / (far - near)).round();
-        gte.dqa = dqa as i16;
-        gte.dqb = (-dqa * near) as i32;
+        set_depth_cue(&mut gte, 1.0);
         Self {
             gte,
             ot: OrderingTable::new(OT_SIZE, OT_SHIFT),
@@ -157,6 +166,7 @@ impl Renderer {
             camera_position: Vec3i32::default(),
             fog: [128, 128, 128],
             fog_enabled: true,
+            fog_scale: 1.0,
             force_bucket: None,
             force_otz: None,
             polygons: 0,
@@ -168,6 +178,11 @@ impl Renderer {
         self.overlay.clear();
         self.polygons = 0;
         self.fog = fog;
+        let scale = fog_scale();
+        if scale != self.fog_scale {
+            self.fog_scale = scale;
+            set_depth_cue(&mut self.gte, scale);
+        }
         self.camera_rotation = Mat3Fx12::rotation_z(angle(camera.roll))
             * Mat3Fx12::rotation_x(angle(camera.pitch))
             * Mat3Fx12::rotation_y(angle(-camera.yaw));
@@ -355,4 +370,14 @@ pub fn screen_quad(
         texture: None,
         blend,
     }
+}
+
+fn set_depth_cue(gte: &mut Gte, scale: f32) {
+    let divisor = |meters: f32| {
+        PROJECTION_H as f64 * 65536.0 / (meters as f64 * scale as f64 * UNITS_PER_METER as f64)
+    };
+    let (near, far) = (divisor(FOG_NEAR), divisor(FOG_FAR));
+    let dqa = (4096.0 * 4096.0 / (far - near)).round();
+    gte.dqa = dqa as i16;
+    gte.dqb = (-dqa * near) as i32;
 }

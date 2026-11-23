@@ -46,6 +46,14 @@ const TREELINE_VINES: f32 = 0.45;
 const VINE_HEIGHT: f32 = 4.0;
 const PRECIPITATION_DROPS: usize = 240;
 const PRECIPITATION_RADIUS: f32 = 24.0;
+const STORM_DROPS: f32 = 1.4;
+const BACKDROP_BAND: f32 = 2.0;
+const DUST_STORM_HAZE: f32 = 50.0;
+const CLIFF_TEXELS: f32 = 8.0;
+const CLIFF_TILE: f32 = 64.0;
+const BACKDROP_STORM_BANDS: f32 = 4.0;
+const RAIN_FALL: f32 = 9.0;
+const STORM_FALL: f32 = 7.0;
 const GROUND_BIAS: i32 = 160;
 const WATER_BIAS: i32 = -250;
 const BEAM_STRENGTH: f32 = 0.5;
@@ -90,6 +98,7 @@ pub struct World {
     pub landscape: crate::landscape::Landscape,
     flakes: Vec<Flake>,
     drops: Vec<[f32; 4]>,
+    storm: f32,
     rng: Rng,
 }
 
@@ -163,6 +172,7 @@ impl World {
             landscape: crate::landscape::Landscape::default(),
             flakes,
             drops: Vec::new(),
+            storm: 0.0,
             rng,
         }
     }
@@ -1265,7 +1275,7 @@ impl World {
         let (biome_a, biome_b, blend) = biomes.at(distance);
         let biome_index = if blend < 0.5 { biome_a } else { biome_b };
         if let Some(backdrop) = art.backdrop(biome_index) {
-            draw_backdrop(renderer, &backdrop, lighting.shade());
+            draw_backdrop(renderer, &backdrop, lighting.shade(), backdrop_band());
             return;
         }
         let (style_a, style_b, t) = biomes.mix(distance, |b| b.horizon);
@@ -1535,12 +1545,33 @@ impl World {
                         };
                         Point::new(position, color, (u, v))
                     };
-                    let points = [
-                        corner(row + 1, strip, u0, v0),
-                        corner(row + 1, strip + 1, u1, v0),
-                        corner(row, strip, u0, v1),
-                        corner(row, strip + 1, u1, v1),
-                    ];
+                    let points = if steep {
+                        let height = |r: usize, s: usize| -sections[r][s].2 * CLIFF_TEXELS;
+                        let rises = [
+                            height(row + 1, strip),
+                            height(row + 1, strip + 1),
+                            height(row, strip),
+                            height(row, strip + 1),
+                        ];
+                        let lowest = rises.iter().copied().fold(f32::MAX, f32::min);
+                        let base = (lowest / CLIFF_TILE).floor() * CLIFF_TILE;
+                        let v = |rise: f32| (rise - base).clamp(0.0, 255.0) as u8;
+                        let along = ((index % 2) as f32 * SAMPLE * CLIFF_TEXELS) as u8;
+                        let next = along + (SAMPLE * CLIFF_TEXELS) as u8 - 1;
+                        [
+                            corner(row + 1, strip, next, v(rises[0])),
+                            corner(row + 1, strip + 1, next, v(rises[1])),
+                            corner(row, strip, along, v(rises[2])),
+                            corner(row, strip + 1, along, v(rises[3])),
+                        ]
+                    } else {
+                        [
+                            corner(row + 1, strip, u0, v0),
+                            corner(row + 1, strip + 1, u1, v0),
+                            corner(row, strip, u0, v1),
+                            corner(row, strip + 1, u1, v1),
+                        ]
+                    };
                     let surface = if textured {
                         Surface::textured(image.texture).tinted(fog_tint)
                     } else {
@@ -2145,13 +2176,16 @@ impl World {
         dt: f32,
         weather: Weather,
         intensity: f32,
+        storm: f32,
         camera: &Camera,
     ) {
+        let heavy = PRECIPITATION_DROPS as f32 * (intensity + STORM_DROPS * storm);
         let (target, fall) = match weather {
-            Weather::Rain => ((PRECIPITATION_DROPS as f32 * intensity) as usize, 9.0),
-            Weather::Snow => ((PRECIPITATION_DROPS as f32 * 0.8 * intensity) as usize, 1.3),
+            Weather::Rain => (heavy as usize, RAIN_FALL + STORM_FALL * storm),
+            Weather::Snow => ((heavy * 0.8) as usize, 1.3 + storm * 1.5),
             _ => (0, 0.0),
         };
+        self.storm = storm;
         let forward = (camera.yaw.sin(), camera.yaw.cos());
         let center = (camera.x + forward.0 * 12.0, camera.z + forward.1 * 12.0);
         let rng = &mut self.rng;
@@ -2198,8 +2232,14 @@ impl World {
         velocity: (f32, f32),
         fog: Rgb,
     ) {
-        let fall = if weather == Weather::Snow { 1.3 } else { 9.0 };
-        let streak = 0.018;
+        let storm = self.storm;
+        let fall = if weather == Weather::Snow {
+            1.3
+        } else {
+            RAIN_FALL + STORM_FALL * storm
+        };
+        let streak = 0.018 + 0.012 * storm;
+        let longest = 14.0 + 12.0 * storm;
         let tail = Vec3i16::new(
             units(-velocity.0 * streak) as i16,
             units(fall * streak) as i16,
@@ -2245,12 +2285,12 @@ impl World {
                         end.sy as i32 - head.sy as i32,
                     );
                     let length = ((dx * dx + dy * dy) as f32).sqrt();
-                    if length > 14.0 {
-                        let scale = 14.0 / length;
+                    if length > longest {
+                        let scale = longest / length;
                         end.sx = head.sx + (dx as f32 * scale) as i16;
                         end.sy = head.sy + (dy as f32 * scale) as i16;
                     }
-                    let brightness = 1.0 - haze * 0.85;
+                    let brightness = (1.0 - haze * 0.85) * (1.0 + storm * 0.4);
                     let bright = scale_rgb([120, 130, 150], brightness);
                     let dim = scale_rgb([40, 45, 55], brightness);
                     let mut push = |offset: i16| {
@@ -2267,7 +2307,7 @@ impl World {
                         );
                     };
                     push(0);
-                    if distance < 5.0 {
+                    if distance < 5.0 + storm * 7.0 {
                         push(1);
                     }
                 }
@@ -2285,12 +2325,13 @@ impl World {
             match weather {
                 Weather::Snow | Weather::Rain => {}
                 Weather::Dust => {
-                    if flake.speed > 1.2 {
+                    if flake.speed > 1.2 - self.storm {
+                        let size = 1 + (self.storm * flake.speed).round() as u16;
                         overlay.push(Primitive::Sprite {
                             x,
                             y,
-                            width: 1,
-                            height: 1,
+                            width: size * 2,
+                            height: size,
                             u: 0,
                             v: 0,
                             color: [120, 80, 40],
@@ -2303,7 +2344,7 @@ impl World {
             }
         }
         if weather == Weather::Dust {
-            let haze = (intensity * 40.0) as u8;
+            let haze = (intensity * 40.0 + self.storm * DUST_STORM_HAZE) as u8;
             overlay.insert(
                 0,
                 screen_quad(
@@ -2346,14 +2387,20 @@ fn view_window(track: &Track, camera: &Camera, from_index: usize) -> (usize, usi
     )
 }
 
-fn draw_backdrop(renderer: &mut Renderer, image: &Image, shade: f32) {
+fn backdrop_band() -> u8 {
+    (BACKDROP_BAND + (1.0 - crate::render::fog_scale()) * BACKDROP_STORM_BANDS)
+        .round()
+        .min(4.0) as u8
+}
+
+fn draw_backdrop(renderer: &mut Renderer, image: &Image, shade: f32, band: u8) {
     const COPIES: usize = 8;
     const PANELS: usize = 8;
     const RADIUS: f32 = 28000.0;
     let ground_level = 1400i16;
     let top = ground_level
         - (RADIUS * std::f32::consts::TAU / COPIES as f32 * image.height as f32 / 256.0) as i16;
-    let texture = band_image(image, 2).texture;
+    let texture = band_image(image, band).texture;
     renderer.set_sky_object(Mat3Fx12::IDENTITY);
     renderer.force_bucket = Some(OT_SIZE - 2);
     let fog_enabled = renderer.fog_enabled;

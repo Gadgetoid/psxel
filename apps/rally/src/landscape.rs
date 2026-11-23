@@ -31,6 +31,8 @@ const DETAIL_RADIUS: f32 = 72.0;
 const DETAIL_ERROR: f32 = 0.3;
 const DETAIL_REACH: f32 = 24.0;
 const STEEP: f32 = 0.75;
+const CLIFF_TEXELS: f32 = 8.0;
+const CLIFF_TILE: f32 = 64.0;
 const DETAIL_BUDGET: usize = 24;
 
 #[derive(Clone, Copy)]
@@ -468,13 +470,33 @@ impl Landscape {
                     let u1 = (u_base + u_span * (i + 1) / across - 1) as u8;
                     let v0 = (v_base + v_span * (across - j - 1) / across) as u8;
                     let v1 = (v_base + v_span * (across - j) / across - 1) as u8;
+                    let side_on = (steep && windowed).then(|| {
+                        let along_x = slope_x.abs() <= slope_z.abs();
+                        let offsets = [(0.0, 0.0), (sub, 0.0), (0.0, sub), (sub, sub)];
+                        let raw = [0, 1, 2, 3].map(|index| {
+                            let (dx, dz) = offsets[index];
+                            let along = if along_x { qx + dx } else { qz + dz };
+                            (along * CLIFF_TEXELS, -heights[index] * CLIFF_TEXELS)
+                        });
+                        let wrap = |values: [f32; 4]| {
+                            let lowest = values.iter().copied().fold(f32::MAX, f32::min);
+                            let base = (lowest / CLIFF_TILE).floor() * CLIFF_TILE;
+                            let span = values.iter().copied().fold(f32::MIN, f32::max) - base;
+                            let squeeze = (255.0 / span.max(1.0)).min(1.0);
+                            values.map(|value| ((value - base) * squeeze) as u8)
+                        };
+                        let us = wrap(raw.map(|(u, _)| u));
+                        let vs = wrap(raw.map(|(_, v)| v));
+                        [0, 1, 2, 3].map(|index| (us[index], vs[index]))
+                    });
                     let corner = |index: usize, dx: f32, dz: f32, u: u8, v: u8| {
                         let local = Vec3i16::new(
                             units(dx) as i16,
                             -units(heights[index] - low) as i16,
                             units(dz) as i16,
                         );
-                        Point::new(local, lighting.lit_by_beam(color, qx + dx, qz + dz), (u, v))
+                        let uv = side_on.map_or((u, v), |uvs| uvs[index]);
+                        Point::new(local, lighting.lit_by_beam(color, qx + dx, qz + dz), uv)
                     };
                     let points = if heights[0] + heights[3] <= heights[1] + heights[2] {
                         [

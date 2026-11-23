@@ -9,6 +9,7 @@ mod hud;
 mod landscape;
 mod livery;
 mod marks;
+mod music;
 mod render;
 mod rng;
 mod signs;
@@ -17,6 +18,7 @@ mod sprites;
 mod storage;
 mod textures;
 mod track;
+mod weather;
 mod world;
 
 use psxel_engine::{Framebuffer, Game, Input, Key};
@@ -38,6 +40,21 @@ const CALL_AHEAD: f32 = 70.0;
 const CALL_SECONDS: f32 = 2.6;
 const BLEND_HOLD: f32 = 300.0;
 const STREAM_REACH: f32 = 60.0;
+const THUNDER_INTERVAL: f32 = 8.0;
+const THUNDER_SPREAD: f32 = 14.0;
+const THUNDER_DELAY: f32 = 2.4;
+const FLASH_DECAY: f32 = 2.5;
+const FLASH_COLOR: [u8; 3] = [225, 230, 255];
+const SUSTAIN_SPEED: f32 = 26.0;
+const SUSTAIN_RISE: f32 = 4.0;
+const SUSTAIN_FALL: f32 = 2.0;
+const REVERB: f32 = 0.75;
+const CANYON_REVERB: f32 = 1.0;
+const TUNNEL_REVERB: f32 = 2.5;
+const STORM_DIMMING: f32 = 0.55;
+const STORM_FOG: f32 = 0.5;
+const RAIN_FOG: f32 = 0.15;
+const DUST_FOG: f32 = 0.25;
 const LOOK_DEAD_ZONE: f32 = 0.18;
 const LOOK_SPEED: f32 = 3.0;
 const LOOK_RETURN: f32 = 2.5;
@@ -79,6 +96,10 @@ struct Rally {
     track: Track,
     world: World,
     marks: marks::TyreMarks,
+    flash: f32,
+    thunder_timer: f32,
+    thunder_delay: Option<(f32, f32)>,
+    sustain: f32,
     car: Car,
     mesh: CarMesh,
     livery: livery::Livery,
@@ -174,6 +195,10 @@ impl Rally {
             renderer: Renderer::new(),
             world: World::new(seed),
             marks: marks::TyreMarks::default(),
+            flash: 0.0,
+            thunder_timer: THUNDER_INTERVAL,
+            thunder_delay: None,
+            sustain: 0.0,
             car,
             mesh: CarMesh::build(&car_atlas),
             livery,
@@ -374,13 +399,23 @@ impl Rally {
                 .trigger(sound::Effect::Thud, (events.landed / 12.0).min(0.9), 0.8);
         }
         if self.last_throttle > 0.7 && self.controls.throttle < 0.1 && self.engine_rpm() > 5.0 {
-            self.sound.trigger(
-                sound::Effect::Pop,
-                0.6,
-                0.9 + (self.frame % 7) as f32 * 0.04,
-            );
-            if self.frame.is_multiple_of(2) {
-                self.sound.trigger(sound::Effect::Pop, 0.4, 1.15);
+            let random = |salt: u64| rng::hash_float(self.seed ^ 0x9095, self.frame as u64, salt);
+            self.sound
+                .trigger(sound::Effect::Pop, 0.6, 0.9 + random(0) * 0.25);
+            let pops = 1 + (random(1) * 4.0) as u32;
+            for pop in 0..pops {
+                let frames = 3 + pop * 4 + (random(2 + pop as u64) * 4.0) as u32;
+                let effect = if random(10 + pop as u64) < 0.3 {
+                    sound::Effect::Crackle
+                } else {
+                    sound::Effect::Pop
+                };
+                self.sound.trigger_after(
+                    frames,
+                    effect,
+                    0.25 + random(20 + pop as u64) * 0.3,
+                    0.85 + random(30 + pop as u64) * 0.35,
+                );
             }
         }
         self.last_throttle = self.controls.throttle;
@@ -585,6 +620,52 @@ impl Rally {
         }
     }
 
+    fn reverb(&self, biome: &biome::Biome) -> f32 {
+        let tunnel = self
+            .track
+            .structure_at(self.car.x, self.car.z, 1.0)
+            .is_some_and(|hit| hit.tunnel && self.car.y < hit.height + track::TUNNEL_HEIGHT);
+        if tunnel {
+            TUNNEL_REVERB
+        } else if biome.ground == art::Ground::Earth {
+            CANYON_REVERB
+        } else {
+            REVERB
+        }
+    }
+
+    fn conditions(&self, distance: f32) -> weather::Conditions {
+        weather::conditions(&self.track, distance, daytime::phase(self.clock).daylight)
+    }
+
+    fn update_storm(&mut self, storm: f32) {
+        self.flash = (self.flash - DT * FLASH_DECAY).max(0.0);
+        let random = |salt: u64| rng::hash_float(self.seed ^ 0x7d0e, self.frame as u64, salt);
+        if let Some((delay, volume)) = self.thunder_delay {
+            let delay = delay - DT;
+            if delay <= 0.0 {
+                self.sound
+                    .trigger(sound::Effect::Thunder, volume, 0.85 + random(1) * 0.25);
+                self.thunder_delay = None;
+            } else {
+                self.thunder_delay = Some((delay, volume));
+            }
+        }
+        if storm <= 0.05 || self.state == State::Title {
+            return;
+        }
+        self.thunder_timer -= DT * storm;
+        if self.thunder_timer <= 0.0 {
+            let distance = random(2);
+            self.flash = 1.0 - distance * 0.6;
+            self.thunder_delay = Some((
+                0.2 + distance * THUNDER_DELAY,
+                (1.0 - distance * 0.6) * storm.max(0.5),
+            ));
+            self.thunder_timer = THUNDER_INTERVAL + random(3) * THUNDER_SPREAD;
+        }
+    }
+
     fn headlights_on(&self) -> bool {
         self.headlight_override
             .unwrap_or(daytime::phase(self.clock).daylight < 0.55)
@@ -609,13 +690,43 @@ impl Rally {
             forward: self.car.forward(),
             strength: 1.0 - phase.daylight * 0.7,
         });
+        let conditions = self.conditions(distance);
+        let cloud = conditions.overcast;
+        let grey = |color: biome::Rgb| {
+            let level = (color[0] as u32 + color[1] as u32 + color[2] as u32) / 3;
+            scale_rgb([level as u8; 3], STORM_DIMMING)
+        };
+        let overcast =
+            |color: biome::Rgb, amount: f32| biome::lerp_rgb(color, grey(color), cloud * amount);
+        let sky = daytime::Sky {
+            top: overcast(sky.top, 0.95),
+            horizon: overcast(sky.horizon, 0.8),
+            fog: overcast(sky.fog, 0.6),
+            sun: biome::lerp_rgb(sky.sun, scale_rgb(sky.sun, STORM_DIMMING), cloud),
+            ambient: overcast(sky.ambient, 0.4),
+        };
+        let dust = biomes.color(distance, |b| b.dust);
+        let dusted = |color: biome::Rgb, amount: f32| {
+            biome::lerp_rgb(color, dust, conditions.dust_storm * amount)
+        };
+        let sky = daytime::Sky {
+            top: dusted(sky.top, 0.85),
+            horizon: dusted(sky.horizon, 0.9),
+            fog: dusted(sky.fog, 0.9),
+            sun: dusted(sky.sun, 0.4),
+            ambient: dusted(sky.ambient, 0.3),
+        };
+        let flicker = if self.frame % 6 < 3 { 1.0 } else { 0.55 };
+        let flash = |color: biome::Rgb, amount: f32| {
+            biome::lerp_rgb(color, FLASH_COLOR, (self.flash * flicker * amount).min(1.0))
+        };
         Lighting {
-            sun: sky.sun,
-            ambient: sky.ambient,
-            fog: sky.fog,
+            sun: flash(sky.sun, 0.5),
+            ambient: flash(sky.ambient, 0.6),
+            fog: flash(sky.fog, 0.45),
             sun_direction: world::sun_direction_at(0.9, phase.elevation),
-            sky_top: sky.top,
-            sky_horizon: sky.horizon,
+            sky_top: flash(sky.top, 0.6),
+            sky_horizon: flash(sky.horizon, 0.6),
             daylight: phase.daylight,
             headlight,
         }
@@ -832,11 +943,7 @@ impl Game for Rally {
         let distance = self.car.distance();
         let (a, b, t) = self.track.biomes.at(distance);
         let biome = if t < 0.5 { &BIOMES[a] } else { &BIOMES[b] };
-        let weather_amount = if t < 0.5 {
-            1.0 - t * 2.0
-        } else {
-            t * 2.0 - 1.0
-        };
+        let conditions = self.conditions(distance);
         let racing = matches!(
             self.state,
             State::Racing | State::Countdown(_) | State::TimeUp(_)
@@ -862,7 +969,15 @@ impl Game for Rally {
             ground: Some(self.car.ground),
             surface: Some(sound::Surface::from_name(biome.surface)),
             weather: Some(biome.weather),
-            weather_amount,
+            precipitation: conditions.precipitation,
+            storm: conditions.storm,
+            gusts: conditions.wind,
+            country_birds: conditions.birds,
+            insects: conditions.insects,
+            biomes: (a, b, t),
+            clock: self.clock,
+            rhythm: self.sustain,
+            reverb: self.reverb(biome),
             engine_volume: if racing { 1.0 } else { 0.5 },
             jungle,
             birds: jungle * daytime::phase(self.clock).daylight,
@@ -1051,10 +1166,14 @@ impl Game for Rally {
         let turn = self.camera.yaw - previous_heading;
         self.world
             .update(DT, weather, turn.clamp(-0.1, 0.1), self.car.speed());
-        let intensity = if t < 0.5 {
-            1.0 - t * 2.0
+        let conditions = self.conditions(distance);
+        let intensity = conditions.precipitation;
+        self.update_storm(conditions.thunder);
+        let fast = self.state == State::Racing && self.car.speed() > SUSTAIN_SPEED;
+        self.sustain = if fast {
+            (self.sustain + DT / SUSTAIN_RISE).min(1.0)
         } else {
-            t * 2.0 - 1.0
+            (self.sustain - DT / SUSTAIN_FALL).max(0.0)
         };
         let shown = if self.state == State::Title && weather == Weather::Rain {
             Weather::Clear
@@ -1062,7 +1181,12 @@ impl Game for Rally {
             weather
         };
         self.world
-            .update_precipitation(DT, shown, intensity, &self.camera);
+            .update_precipitation(DT, shown, intensity, conditions.storm, &self.camera);
+        render::set_fog_scale(
+            1.0 - STORM_FOG * conditions.storm
+                - RAIN_FOG * conditions.precipitation
+                - DUST_FOG * conditions.dust_storm,
+        );
         livery::write_clut(
             &mut self.vram,
             &self.livery,
@@ -1150,10 +1274,16 @@ impl Game for Rally {
         );
 
         let (a, b, t) = self.track.biomes.at(distance);
-        let (weather, intensity) = if t < 0.5 {
-            (BIOMES[a].weather, 1.0 - t * 2.0)
+        let weather = if t < 0.5 {
+            BIOMES[a].weather
         } else {
-            (BIOMES[b].weather, t * 2.0 - 1.0)
+            BIOMES[b].weather
+        };
+        let conditions = self.conditions(distance);
+        let intensity = if weather == Weather::Dust {
+            conditions.dust
+        } else {
+            conditions.precipitation
         };
         let sheltered = self
             .track

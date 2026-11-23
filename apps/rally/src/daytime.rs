@@ -4,6 +4,8 @@ pub const CYCLE_SECONDS: f32 = 480.0;
 const DAY_END: f32 = 0.5;
 const DUSK_END: f32 = 0.62;
 const NIGHT_END: f32 = 0.88;
+const DAWN_START: f32 = NIGHT_END - 0.02;
+const DAWN_AFTER: f32 = 0.06;
 
 const NIGHT_SKY_TOP: Rgb = [10, 14, 32];
 const NIGHT_SKY_HORIZON: Rgb = [28, 34, 60];
@@ -46,6 +48,15 @@ pub fn phase(clock: f32) -> Phase {
         warmth,
         elevation,
     }
+}
+
+pub fn dawn(clock: f32) -> f32 {
+    let into = (clock.rem_euclid(1.0) - DAWN_START).rem_euclid(1.0);
+    let t = into / (1.0 - DAWN_START + DAWN_AFTER);
+    if t >= 1.0 {
+        return 0.0;
+    }
+    (t * std::f32::consts::PI).sin()
 }
 
 pub struct Sky {

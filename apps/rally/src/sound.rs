@@ -2,6 +2,7 @@ use psxel_engine::{Audio, SoundId};
 
 use crate::biome::Weather;
 use crate::car::Ground;
+use crate::music::{Cue, Music};
 
 macro_rules! asset {
     ($name:literal) => {
@@ -22,8 +23,17 @@ const STREAM_CHANNEL: usize = 26;
 const JUNGLE_VOLUME: f32 = 0.4;
 const BIRDS_VOLUME: f32 = 0.3;
 const STREAM_VOLUME: f32 = 0.5;
-const MUSIC_CHANNEL: usize = 30;
-const MUSIC_VOLUME: f32 = 0.35;
+const STORM_CHANNEL: usize = 27;
+const GUSTS_CHANNEL: usize = 28;
+const COUNTRY_BIRDS_CHANNEL: usize = 29;
+const NIGHT_CHANNEL: usize = 33;
+const STORM_VOLUME: f32 = 0.45;
+const GUSTS_VOLUME: f32 = 0.35;
+const COUNTRY_BIRDS_VOLUME: f32 = 0.22;
+const NIGHT_VOLUME: f32 = 0.3;
+const RAIN_VOLUME: f32 = 0.32;
+const MUSIC_VOLUME: f32 = 0.7;
+const MUSIC_SPEED_LIFT: f32 = 0.25;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
@@ -48,6 +58,8 @@ impl Surface {
 pub enum Effect {
     Thud,
     Pop,
+    Crackle,
+    Thunder,
     Call,
     Splash,
 }
@@ -63,7 +75,15 @@ pub struct Mix {
     pub ground: Option<Ground>,
     pub surface: Option<Surface>,
     pub weather: Option<Weather>,
-    pub weather_amount: f32,
+    pub precipitation: f32,
+    pub storm: f32,
+    pub gusts: f32,
+    pub country_birds: f32,
+    pub insects: f32,
+    pub biomes: (usize, usize, f32),
+    pub clock: f32,
+    pub rhythm: f32,
+    pub reverb: f32,
     pub engine_volume: f32,
     pub jungle: f32,
     pub birds: f32,
@@ -84,12 +104,19 @@ struct Bank {
     pop: SoundId,
     call: SoundId,
     splash: SoundId,
-    music: SoundId,
+    storm: SoundId,
+    gusts: SoundId,
+    country_birds: SoundId,
+    night: SoundId,
+    crackle: SoundId,
+    thunder: SoundId,
 }
 
 pub struct SoundSystem {
     bank: Option<Bank>,
+    player: Option<Music>,
     pending: Vec<(Effect, f32, f32)>,
+    scheduled: Vec<(u32, Effect, f32, f32)>,
     pub muted: bool,
     pub music: bool,
     master: f32,
@@ -99,7 +126,9 @@ impl Default for SoundSystem {
     fn default() -> Self {
         Self {
             bank: None,
+            player: None,
             pending: Vec::new(),
+            scheduled: Vec::new(),
             muted: false,
             music: true,
             master: 0.0,
@@ -108,6 +137,12 @@ impl Default for SoundSystem {
 }
 
 impl SoundSystem {
+    pub fn trigger_after(&mut self, frames: u32, effect: Effect, volume: f32, rate: f32) {
+        if self.scheduled.len() < 16 {
+            self.scheduled.push((frames, effect, volume, rate));
+        }
+    }
+
     pub fn trigger(&mut self, effect: Effect, volume: f32, rate: f32) {
         if self.pending.len() < 8 {
             self.pending.push((effect, volume, rate));
@@ -142,20 +177,12 @@ impl SoundSystem {
             pop: audio.load_wav(asset!("rally_pop")),
             call: audio.load_wav(asset!("rally_call")),
             splash: audio.load_wav(asset!("rally_splash")),
-            music: {
-                let stream = psxel_spu::decode_file(include_bytes!(
-                    "../../../assets/sounds/rally_music.spu"
-                ))
-                .expect("music stream");
-                audio.load_samples(
-                    stream.rate,
-                    stream
-                        .samples
-                        .iter()
-                        .map(|&sample| sample as f32 / 32768.0)
-                        .collect(),
-                )
-            },
+            storm: audio.load_wav(asset!("rally_storm")),
+            gusts: audio.load_wav(asset!("rally_gusts")),
+            country_birds: audio.load_wav(asset!("rally_birds")),
+            night: audio.load_wav(asset!("rally_night")),
+            crackle: audio.load_wav(asset!("rally_crackle")),
+            thunder: audio.load_wav(asset!("rally_thunder")),
         }
     }
 
@@ -253,11 +280,30 @@ impl SoundSystem {
             0.8 + speed_level * 0.6,
         );
         let rain = if matches!(mix.weather, Some(Weather::Rain)) {
-            mix.weather_amount * 0.32
+            mix.precipitation * (1.0 - mix.storm * 0.6) * RAIN_VOLUME
         } else {
             0.0
         };
         audio.set_loop(RAIN_CHANNEL, bank.rain, rain, 1.0);
+        let storm = if matches!(mix.weather, Some(Weather::Rain)) {
+            mix.storm
+        } else {
+            0.0
+        };
+        audio.set_loop(STORM_CHANNEL, bank.storm, storm * STORM_VOLUME, 1.0);
+        audio.set_loop(
+            GUSTS_CHANNEL,
+            bank.gusts,
+            mix.gusts * GUSTS_VOLUME,
+            0.9 + mix.gusts * 0.2,
+        );
+        audio.set_loop(
+            COUNTRY_BIRDS_CHANNEL,
+            bank.country_birds,
+            mix.country_birds * COUNTRY_BIRDS_VOLUME,
+            1.0,
+        );
+        audio.set_loop(NIGHT_CHANNEL, bank.night, mix.insects * NIGHT_VOLUME, 1.0);
         audio.set_loop(JUNGLE_CHANNEL, bank.jungle, mix.jungle * JUNGLE_VOLUME, 1.0);
         audio.set_loop(BIRDS_CHANNEL, bank.birds, mix.birds * BIRDS_VOLUME, 1.0);
         audio.set_loop_panned(
@@ -267,17 +313,34 @@ impl SoundSystem {
             1.0,
             mix.stream.1,
         );
-        audio.set_loop(
-            MUSIC_CHANNEL,
-            bank.music,
-            if self.music { MUSIC_VOLUME } else { 0.0 },
-            1.0,
-        );
+        audio.set_reverb(mix.reverb);
+        let player = self.player.get_or_insert_with(|| Music::load(audio));
+        if self.music {
+            let cue = Cue {
+                blend: player.score.blend(mix.biomes, mix.clock),
+                rhythm: mix.rhythm,
+                volume: MUSIC_VOLUME * (1.0 + MUSIC_SPEED_LIFT * mix.rhythm),
+            };
+            player.update(audio, &cue);
+        }
 
+        for scheduled in &mut self.scheduled {
+            scheduled.0 = scheduled.0.saturating_sub(1);
+        }
+        let due: Vec<(Effect, f32, f32)> = self
+            .scheduled
+            .iter()
+            .filter(|scheduled| scheduled.0 == 0)
+            .map(|&(_, effect, volume, rate)| (effect, volume, rate))
+            .collect();
+        self.scheduled.retain(|scheduled| scheduled.0 > 0);
+        self.pending.extend(due);
         for (effect, volume, rate) in self.pending.drain(..) {
             let sound = match effect {
                 Effect::Thud => bank.thud,
                 Effect::Pop => bank.pop,
+                Effect::Crackle => bank.crackle,
+                Effect::Thunder => bank.thunder,
                 Effect::Call => bank.call,
                 Effect::Splash => bank.splash,
             };
