@@ -11,6 +11,7 @@ use crate::textures::Image;
 pub type Vec3 = [f32; 3];
 
 const CHUNK: f32 = 16.0;
+const NEAR_DETAIL: f32 = 12.0;
 
 pub fn add(a: Vec3, b: Vec3) -> Vec3 {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
@@ -76,6 +77,8 @@ pub fn tiled(image: &Image) -> Image {
 pub enum Zone {
     Exterior,
     Interior,
+    Cave,
+    Grotto,
 }
 
 #[derive(Clone, Copy)]
@@ -83,6 +86,7 @@ pub struct Material {
     pub surface: Surface,
     pub tint: Vec3,
     pub double_sided: bool,
+    pub bias: i32,
 }
 
 impl Material {
@@ -91,6 +95,7 @@ impl Material {
             surface: Surface::textured(tiled(image).texture),
             tint: [1.0; 3],
             double_sided: false,
+            bias: 0,
         }
     }
 
@@ -99,11 +104,17 @@ impl Material {
             surface: Surface::gouraud(),
             tint: color.map(|channel| channel as f32 / 128.0),
             double_sided: false,
+            bias: 0,
         }
     }
 
     pub fn tinted(mut self, tint: Vec3) -> Self {
         self.tint = multiply(self.tint, tint);
+        self
+    }
+
+    pub fn biased(mut self, bias: i32) -> Self {
+        self.bias = bias;
         self
     }
 
@@ -136,6 +147,11 @@ impl Cell {
         }
     }
 
+    pub fn biased(mut self, bias: i32) -> Self {
+        self.material = self.material.biased(bias);
+        self
+    }
+
     fn uvs(&self, tiled: [(f32, f32); 4]) -> [(f32, f32); 4] {
         match self.panel {
             Some(image) => {
@@ -165,6 +181,7 @@ struct Face {
     count: usize,
     surface: Surface,
     double_sided: bool,
+    bias: i32,
 }
 
 struct Chunk {
@@ -212,7 +229,13 @@ impl Mesh {
                 world_to_psx(chunk.origin[0], chunk.origin[1], chunk.origin[2]),
                 Mat3Fx12::IDENTITY,
             );
-            let bias = if chunk.zone == Zone::Interior {
+            let close = length(sub(chunk.origin, view.position)) - chunk.radius < NEAR_DETAIL;
+            let detail = if chunk.zone == Zone::Exterior && !close {
+                2
+            } else {
+                3
+            };
+            let bias = if chunk.zone != Zone::Exterior {
                 view.interior_bias
             } else {
                 0
@@ -233,7 +256,7 @@ impl Mesh {
                 } else {
                     face.surface
                 };
-                renderer.polygon(points, surface, bias, 2);
+                renderer.polygon(points, surface, bias + face.bias, detail);
             }
         }
     }
@@ -281,6 +304,29 @@ impl<'a> Builder<'a> {
             count: 4,
             material,
         });
+    }
+
+    pub fn quad_facing(
+        &mut self,
+        zone: Zone,
+        positions: [Vec3; 4],
+        uvs: [(f32, f32); 4],
+        material: Material,
+        towards: Vec3,
+    ) {
+        let [a, b, c, d] = positions;
+        let normal = cross(sub(b, a), sub(c, a));
+        let centroid = scale(add(add(a, b), add(c, d)), 0.25);
+        if dot(normal, sub(towards, centroid)) >= 0.0 {
+            self.quad(zone, positions, uvs, material);
+        } else {
+            self.quad(
+                zone,
+                [b, a, d, c],
+                [uvs[1], uvs[0], uvs[3], uvs[2]],
+                material,
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -415,6 +461,44 @@ impl<'a> Builder<'a> {
         );
     }
 
+    pub fn dressed_block(
+        &mut self,
+        zone: Zone,
+        min: Vec3,
+        max: Vec3,
+        density: f32,
+        sides: [Cell; 4],
+        top: Cell,
+    ) {
+        let rows = steps(min[1], max[1], 2.5);
+        let corners = [
+            (min[0], min[2]),
+            (max[0], min[2]),
+            (max[0], max[2]),
+            (min[0], max[2]),
+        ];
+        for (side, cell) in sides.into_iter().enumerate() {
+            self.wall(
+                zone,
+                corners[side],
+                corners[(side + 1) % 4],
+                &rows,
+                4.0,
+                density,
+                |_| Some(cell),
+            );
+        }
+        self.floor(
+            zone,
+            &[min[0], max[0]],
+            &[min[2], max[2]],
+            |_, _| max[1],
+            true,
+            density,
+            |_| Some(top),
+        );
+    }
+
     pub fn build(self) -> Mesh {
         let lighting = self.lighting;
         let mut groups: BTreeMap<(Zone, i32, i32, i32), Vec<Pending>> = BTreeMap::new();
@@ -493,5 +577,6 @@ fn lit_face(lighting: &Lighting, pending: &Pending, origin: Vec3) -> Face {
         count: pending.count,
         surface: pending.material.surface,
         double_sided: pending.material.double_sided,
+        bias: pending.material.bias,
     }
 }

@@ -1,5 +1,8 @@
 mod art;
+mod cave;
+mod crypt;
 mod effects;
+mod grotto;
 mod lighting;
 mod mesh;
 mod path;
@@ -10,7 +13,9 @@ mod render;
 #[allow(dead_code)]
 #[path = "../../rally/src/rng.rs"]
 mod rng;
+mod ruins;
 mod scene;
+mod secrets;
 mod sound;
 #[allow(dead_code)]
 #[path = "../../rally/src/sprites.rs"]
@@ -28,18 +33,21 @@ use psxel_vram::Vram;
 
 use art::Art;
 use biome::Rgb;
+use lighting::LightKind;
 use mesh::{length, sub, Vec3, View};
 use path::Path;
 use render::{
     screen_quad, Camera, Renderer, PROJECTION_H, SCREEN_HEIGHT, SCREEN_WIDTH, UNITS_PER_METER,
 };
-use scene::{insideness, Scene};
+use scene::{insideness, temple_amount, Scene};
 use sound::{Mix, SoundSystem, Voice};
 use terrain::{lerp, CLIFF_TOP, FALLS_HALF_WIDTH, FALLS_Z, POOL_CENTER, WATER_Y};
 
 const DT: f32 = 1.0 / 60.0;
 const OUTSIDE_FOG: Rgb = [88, 108, 88];
 const INSIDE_FOG: Rgb = [7, 6, 5];
+const CAVE_FOG: Rgb = [4, 9, 11];
+const GROTTO_FOG: Rgb = [6, 10, 8];
 const OUTSIDE_SKY: Rgb = [128, 150, 140];
 const FOG_NEAR: (f32, f32) = (16.0, 6.0);
 const FOG_FAR: (f32, f32) = (115.0, 60.0);
@@ -181,7 +189,12 @@ impl Temple {
         let camera = self.camera;
         let position = self.position();
         let inside = insideness(position);
-        let fog = lerp_rgb(OUTSIDE_FOG, INSIDE_FOG, inside);
+        let indoor_fog = lerp_rgb(
+            lerp_rgb(INSIDE_FOG, CAVE_FOG, cave::amount(position)),
+            GROTTO_FOG,
+            grotto::amount(position),
+        );
+        let fog = lerp_rgb(OUTSIDE_FOG, indoor_fog, inside);
         let near = lerp(FOG_NEAR.0, FOG_NEAR.1, inside);
         let far = lerp(FOG_FAR.0, FOG_FAR.1, inside);
         set_fog_range(&mut self.renderer, near, far);
@@ -208,7 +221,7 @@ impl Temple {
         let buffer_y = (self.frame % 2) as i32 * SCREEN_HEIGHT;
         self.frame = self.frame.wrapping_add(1);
         let env = DrawEnv::new(0, buffer_y, SCREEN_WIDTH, SCREEN_HEIGHT);
-        let sky = lerp_rgb(OUTSIDE_SKY, INSIDE_FOG, inside);
+        let sky = lerp_rgb(OUTSIDE_SKY, indoor_fog, inside);
         draw(
             &mut self.vram,
             &env,
@@ -248,8 +261,10 @@ impl Temple {
 
     fn mix(&self) -> Mix {
         let position = self.position();
-        let inside = insideness(position);
-        let outside = 1.0 - inside;
+        let temple = temple_amount(position).max(crypt::amount(position));
+        let cave = cave::amount(position);
+        let grotto = grotto::amount(position);
+        let outside = 1.0 - temple.max(cave).max(grotto);
         let falls = [
             -38.5,
             position[1].clamp(WATER_Y, CLIFF_TOP),
@@ -258,22 +273,33 @@ impl Temple {
         let torch = self
             .scene
             .lighting
-            .torches
+            .lights
             .iter()
-            .map(|torch| torch.position)
+            .filter(|light| light.kind == LightKind::Torch)
+            .map(|light| light.position)
             .min_by(|a, b| length(sub(*a, position)).total_cmp(&length(sub(*b, position))))
             .unwrap_or(position);
         let mut waterfall = self.emitter(falls, 1.0, 95.0);
-        waterfall.volume *= 1.0 - 0.85 * inside;
+        waterfall.volume *= 1.0 - 0.85 * temple - 0.35 * cave - 0.3 * grotto;
         let mut stream = self.emitter([POOL_CENTER.0, WATER_Y, POOL_CENTER.1], 0.5, 30.0);
         stream.volume *= outside;
         Mix {
             jungle: Voice::ambient(0.6 * outside),
             waterfall,
             stream,
-            drone: Voice::ambient(0.5 * inside),
-            drips: Voice::ambient(0.6 * inside),
+            drone: Voice::ambient(0.5 * temple + 0.15 * cave),
+            drips: Voice::ambient(0.6 * temple + 0.8 * cave + 0.7 * grotto),
             torch: self.emitter(torch, 0.6, 9.0),
+            cascade: {
+                let nearest = grotto::CRACKS
+                    .iter()
+                    .map(|&(x, z)| [x, position[1].clamp(grotto::WATER, grotto::CEILING), z])
+                    .min_by(|a, b| length(sub(*a, position)).total_cmp(&length(sub(*b, position))))
+                    .unwrap_or(position);
+                let mut voice = self.emitter(nearest, 0.75, 16.0);
+                voice.volume *= grotto.max(0.25);
+                voice
+            },
         }
     }
 }
@@ -325,30 +351,69 @@ impl Game for Temple {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn screenshots(directory: &str, times: Option<&str>) {
+fn look_at(position: Vec3, target: Vec3) -> Camera {
+    let (dx, dy, dz) = (
+        target[0] - position[0],
+        target[1] - position[1],
+        target[2] - position[2],
+    );
+    Camera {
+        x: position[0],
+        y: position[1],
+        z: position[2],
+        yaw: dx.atan2(dz),
+        pitch: (-dy).atan2(dx.hypot(dz)),
+        roll: 0.0,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn screenshots(directory: &str, times: Option<&str>, views: Option<&str>) {
     let mut temple = Temple::new();
     let duration = temple.path.duration;
     println!("tour: {duration:.1} s");
-    let times: Vec<f32> = match times {
-        Some(list) => list
-            .split(',')
-            .filter_map(|time| time.parse().ok())
-            .collect(),
-        None => (0..12).map(|shot| duration * shot as f32 / 12.0).collect(),
-    };
+    let mut shots: Vec<(String, f32, Option<Camera>)> = Vec::new();
+    if let Some(views) = views {
+        for (index, view) in views.split(';').enumerate() {
+            let values: Vec<f32> = view
+                .split(',')
+                .filter_map(|v| v.trim().parse().ok())
+                .collect();
+            if values.len() == 6 {
+                let camera = look_at(
+                    [values[0], values[1], values[2]],
+                    [values[3], values[4], values[5]],
+                );
+                shots.push((format!("view_{index:02}"), 10.0, Some(camera)));
+            }
+        }
+    } else {
+        let times: Vec<f32> = match times {
+            Some(list) => list
+                .split(',')
+                .filter_map(|time| time.parse().ok())
+                .collect(),
+            None => (0..12).map(|shot| duration * shot as f32 / 12.0).collect(),
+        };
+        shots.extend(
+            times
+                .into_iter()
+                .map(|time| (format!("temple_{time:07.3}"), time, None)),
+        );
+    }
     let (width, height) = (SCREEN_WIDTH as usize, SCREEN_HEIGHT as usize);
     let mut pixels = vec![0u16; width * height];
-    for time in times {
+    for (name, time, camera) in shots {
         temple.tour_time = time;
         temple.time = time;
-        temple.camera = temple.tour_camera();
+        temple.camera = camera.unwrap_or_else(|| temple.tour_camera());
         let buffer_y = temple.render_frame();
         temple.copy_frame(buffer_y, &mut pixels, width, height);
         let rgb: Vec<u8> = pixels
             .iter()
             .flat_map(|&pixel| [0, 5, 10].map(|shift| (((pixel >> shift) & 0x1f) << 3) as u8))
             .collect();
-        let path = format!("{directory}/temple_{:05.1}.png", time);
+        let path = format!("{directory}/{name}.png");
         let file = std::fs::File::create(&path).expect("create screenshot");
         let mut encoder =
             png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
@@ -368,12 +433,14 @@ fn main() {
         let arguments: Vec<String> = std::env::args().collect();
         if let Some(index) = arguments.iter().position(|argument| argument == "--shots") {
             let directory = arguments.get(index + 1).map(String::as_str).unwrap_or(".");
-            let times = arguments
-                .iter()
-                .position(|argument| argument == "--times")
-                .and_then(|index| arguments.get(index + 1))
-                .map(String::as_str);
-            screenshots(directory, times);
+            let option = |name: &str| {
+                arguments
+                    .iter()
+                    .position(|argument| argument == name)
+                    .and_then(|index| arguments.get(index + 1))
+                    .map(String::as_str)
+            };
+            screenshots(directory, option("--times"), option("--views"));
             return;
         }
     }

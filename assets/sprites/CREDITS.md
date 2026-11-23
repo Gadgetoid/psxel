@@ -60,6 +60,10 @@ Variant `_0` comes from the unsuffixed source file, `_1` from `-2`, `_2` from `-
 | `carved_star` | panel cropped from `carved_jungle_temple_stone_*-2` |
 | `carved_sun` | panel cropped from `carved_jungle_temple_stone_*-3` |
 | `carved_rosette` | panel cropped from `carved_jungle_temple_stone_*-4` |
+| `cliff_jungle_*` | `jungle_rockface_*` |
+| `treasure_*` | `weathered_pile_of_aztec_treasure_*` |
+| `coins_*` | `very_small_weathered_aztec_gold_coins_*` |
+| `coins_large` | `small_weathered_aztec_gold_coins_*` |
 
 These are converted by `jungle/make_rally_jungle.py` in the same tools repo:
 

@@ -11,7 +11,7 @@
 
 - `apps/demo`: test pattern.
 - `apps/rally`: procedural rally game built on the above.
-- `apps/temple`: jungle temple fly-through. Reuses rally's `render`, `rng` and `sprites` modules via `#[path]`; static geometry is chunked with baked per-vertex lighting and per-torch flicker; water, mist, flames and light shafts are procedural.
+- `apps/temple`: jungle temple fly-through. Reuses rally's `render`, `rng` and `sprites` modules via `#[path]`; static geometry is chunked with baked per-vertex lighting and per-torch flicker; water, mist, flames, crystals and light shafts are procedural. `cave` holds the hidden cave behind the waterfall (jittered rock surfaces in their own lighting zone, crystal and shimmer lights); `grotto` is the waterfall's source cave inside a hill on the plateau: indoor pool, ceiling cascades, sunken treasure, carved columns, and a stepped passage through a square doorway to the sinkhole; `ruins` holds the causeway (ending in a blocked jungle tunnel), stelae, walls and fallen blocks (rotated boxes); `crypt` is the flooded vault under the chamber; `secrets` holds the sunken pool treasure and the sinkhole ruin. Billboards sort as one unit at their centre (`force_otz`) and overlays carry a material depth bias, to avoid painter's-order flicker. `--views` renders screenshots from arbitrary cameras.
 
 ## Web
 

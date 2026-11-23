@@ -3,14 +3,25 @@ use psxel_prim::BlendMode;
 
 use crate::art::Art;
 use crate::biome::Rgb;
-use crate::mesh::{add, cross, dot, length, local, normalize, scale, sub, tiled, Vec3, View};
+use crate::cave;
+use crate::grotto;
+use crate::lighting::LightKind;
+use crate::mesh::{
+    add, cross, dot, length, local, normalize, scale, steps, sub, tiled, Vec3, View,
+};
 use crate::render::{world_to_psx, Point, Renderer, Surface, OT_SIZE};
 use crate::rng::hash_float;
-use crate::scene::{Billboard, Scene, Shaft, ALTAR_TOP};
+use crate::scene::{Billboard, Scene, Shaft, ALTAR_TOP, SHRINE_ROOF};
+use crate::secrets;
 use crate::terrain::{CLIFF_X, FALLS_HALF_WIDTH, FALLS_Z, POOL_CENTER, RIVER_Y, TEMPLE_Z, WATER_Y};
 use crate::textures::Image;
 
 const BLACK: Rgb = [0, 0, 0];
+const HANGING_BIAS: i32 = -48;
+const STANDING_BIAS: i32 = -8;
+const SURFACE_BIAS: i32 = -12;
+const GOLD: Vec3 = [235.0, 178.0, 62.0];
+const JADE: Vec3 = [70.0, 200.0, 130.0];
 const FALLS_PROFILE: [(f32, f32); 7] = [
     (CLIFF_X, RIVER_Y),
     (-39.3, 15.9),
@@ -69,7 +80,14 @@ fn billboard(
         Point::new(corner(-1.0, bottom), color, (u0, v1)),
         Point::new(corner(1.0, bottom), color, (u1, v1)),
     ];
-    renderer.polygon(&points, surface, 0, 1);
+    let middle = local([0.0, (top + bottom) * 0.5, 0.0], [0.0; 3]);
+    renderer.force_otz = Some(renderer.depth_of(middle) as u32);
+    let bias = match placement {
+        Anchor::Top => HANGING_BIAS,
+        _ => STANDING_BIAS,
+    };
+    renderer.polygon(&points, surface, bias, 1);
+    renderer.force_otz = None;
 }
 
 fn additive(image: &Image) -> Surface {
@@ -81,15 +99,40 @@ fn additive(image: &Image) -> Surface {
 pub fn draw(renderer: &mut Renderer, view: &View, art: &Art, scene: &Scene, flicker: &[f32]) {
     horizon(renderer, view, art);
     billboards(renderer, view, &scene.billboards);
-    torches(renderer, view, art, scene, flicker);
+    lights(renderer, view, art, scene, flicker);
     waterfall(renderer, view, art);
-    river(renderer, view, art);
+    indoor_pool(renderer, view, art);
+    cascades(renderer, view, art);
     pool(renderer, view, art, &scene.pool);
     mist(renderer, view, art);
     shafts(renderer, view, &scene.shafts);
     skylight(renderer, view);
     motes(renderer, view, art);
-    idol(renderer, view, art);
+    idol(renderer, view, art, IDOL, GOLD, 1.0);
+    idol(renderer, view, art, cave::IDOL, GOLD, 1.0);
+    idol(renderer, view, art, secrets::pool_idol(), GOLD, 2.2);
+    idol(renderer, view, art, secrets::jade_idol(), JADE, 1.6);
+    idol(renderer, view, art, grotto::IDOL, GOLD, 1.3);
+    drips(renderer, view, art);
+    glints(
+        renderer,
+        view,
+        art,
+        [cave::IDOL[0], 0.55, cave::IDOL[2]],
+        3.0,
+        57,
+    );
+    glints(
+        renderer,
+        view,
+        art,
+        [cave::IDOL[0], 1.15, cave::IDOL[2]],
+        0.8,
+        59,
+    );
+    glints(renderer, view, art, secrets::pool_idol(), 1.6, 58);
+    glints(renderer, view, art, grotto::IDOL, 2.6, 60);
+    jade_glow(renderer, view, art);
 }
 
 fn horizon(renderer: &mut Renderer, view: &View, art: &Art) {
@@ -161,41 +204,156 @@ fn billboards(renderer: &mut Renderer, view: &View, list: &[Billboard]) {
     }
 }
 
-fn torches(renderer: &mut Renderer, view: &View, art: &Art, scene: &Scene, flicker: &[f32]) {
-    for (index, torch) in scene.lighting.torches.iter().enumerate() {
-        if !view.visible(torch.position, 2.0) {
+fn lights(renderer: &mut Renderer, view: &View, art: &Art, scene: &Scene, flicker: &[f32]) {
+    for (index, light) in scene.lighting.lights.iter().enumerate() {
+        if !view.visible(light.position, 2.0) {
             continue;
         }
         let strength = flicker[index];
-        let frame = ((view.time * 14.0) as usize + index * 5) % art.procedural.flames.len();
-        let flame = &art.procedural.flames[frame];
-        billboard(
-            renderer,
-            view,
-            flame,
-            torch.position,
-            (0.4, 0.8),
-            scaled([128, 128, 128], strength),
-            additive(flame),
-            Anchor::Base,
-        );
-        let glow = &art.procedural.glow;
-        let centre = [
-            torch.position[0],
-            torch.position[1] + 0.35,
-            torch.position[2],
+        match light.kind {
+            LightKind::Torch => {
+                let frame = ((view.time * 14.0) as usize + index * 5) % art.procedural.flames.len();
+                let flame = &art.procedural.flames[frame];
+                billboard(
+                    renderer,
+                    view,
+                    flame,
+                    light.position,
+                    (0.4, 0.8),
+                    scaled([128, 128, 128], strength),
+                    additive(flame),
+                    Anchor::Base,
+                );
+                let glow = &art.procedural.glow;
+                let centre = [
+                    light.position[0],
+                    light.position[1] + 0.35,
+                    light.position[2],
+                ];
+                billboard(
+                    renderer,
+                    view,
+                    glow,
+                    centre,
+                    (2.6, 2.6),
+                    scaled([70, 46, 26], strength),
+                    additive(glow),
+                    Anchor::Centre,
+                );
+            }
+            LightKind::Crystal => {
+                let glow = &art.procedural.cold_glow;
+                billboard(
+                    renderer,
+                    view,
+                    glow,
+                    light.position,
+                    (3.2, 3.2),
+                    scaled([60, 70, 72], strength),
+                    additive(glow),
+                    Anchor::Centre,
+                );
+            }
+            LightKind::Shimmer => {}
+        }
+    }
+}
+
+fn drips(renderer: &mut Renderer, view: &View, art: &Art) {
+    let image = &art.procedural.mote;
+    let spots: [(f32, f32, f32); 8] = [
+        (-43.0, 13.2, 6.0),
+        (-46.5, 15.1, 6.0),
+        (-52.5, 9.0, 8.2),
+        (-58.0, 19.0, 7.6),
+        (-55.0, 6.5, 7.9),
+        (-60.0, 11.0, 7.4),
+        (-53.0, 20.5, 8.0),
+        (-57.5, 16.8, 7.5),
+    ];
+    if !view.visible([-52.0, 4.0, 14.0], 14.0) || cave::amount(view.position) <= 0.0 {
+        return;
+    }
+    for (index, &(x, z, top)) in spots.iter().enumerate() {
+        let phase = (view.time * 0.9 + index as f32 * 0.37).fract();
+        let fall = phase.powi(2);
+        if fall < 1.0 && phase < 0.85 {
+            let y = top - fall / 0.7225 * top;
+            billboard(
+                renderer,
+                view,
+                image,
+                [x, y.max(0.05), z],
+                (0.05, 0.22),
+                [70, 90, 100],
+                additive(image),
+                Anchor::Centre,
+            );
+        } else {
+            let splash = 1.0 - (phase - 0.85) / 0.15;
+            billboard(
+                renderer,
+                view,
+                &art.procedural.cold_glow,
+                [x, 0.08, z],
+                (0.5, 0.25),
+                scaled([60, 80, 90], splash),
+                additive(&art.procedural.cold_glow),
+                Anchor::Centre,
+            );
+        }
+    }
+}
+
+fn glints(renderer: &mut Renderer, view: &View, art: &Art, centre: Vec3, spread: f32, seed: u64) {
+    if !view.visible(centre, spread + 1.0) {
+        return;
+    }
+    let glow = &art.procedural.glow;
+    for index in 0..7u64 {
+        let random = |salt: u64| hash_float(seed, index, salt);
+        let sparkle = ((view.time * (0.9 + random(1)) + random(2) * 6.0)
+            .sin()
+            .max(0.0))
+        .powi(12);
+        if sparkle < 0.05 {
+            continue;
+        }
+        let position = [
+            centre[0] - spread + random(3) * spread * 2.0,
+            centre[1] - 0.2 + random(5) * 0.3,
+            centre[2] - spread + random(4) * spread * 2.0,
         ];
         billboard(
             renderer,
             view,
             glow,
-            centre,
-            (2.6, 2.6),
-            scaled([70, 46, 26], strength),
+            position,
+            (0.35, 0.35),
+            scaled([255, 220, 140], sparkle),
             additive(glow),
             Anchor::Centre,
         );
     }
+}
+
+fn jade_glow(renderer: &mut Renderer, view: &View, art: &Art) {
+    let centre = secrets::jade_idol();
+    if !view.visible(centre, 2.0) {
+        return;
+    }
+    let pulse = 0.7 + 0.3 * (view.time * 1.1).sin();
+    let glow = &art.procedural.cold_glow;
+    billboard(
+        renderer,
+        view,
+        glow,
+        centre,
+        (2.4, 2.4),
+        scaled([40, 90, 60], pulse),
+        additive(glow),
+        Anchor::Centre,
+    );
 }
 
 fn waterfall(renderer: &mut Renderer, view: &View, art: &Art) {
@@ -243,9 +401,10 @@ fn waterfall(renderer: &mut Renderer, view: &View, art: &Art) {
     }
 }
 
-fn river(renderer: &mut Renderer, view: &View, art: &Art) {
-    let origin = [-68.0, RIVER_Y, FALLS_Z];
-    if !view.visible(origin, 30.0) {
+fn indoor_pool(renderer: &mut Renderer, view: &View, art: &Art) {
+    let (x0, x1, z0, z1) = grotto::POOL;
+    let origin = [(x0 + x1) * 0.5, grotto::WATER, (z0 + z1) * 0.5];
+    if !view.visible(origin, 9.0) {
         return;
     }
     set_origin(renderer, origin);
@@ -253,32 +412,102 @@ fn river(renderer: &mut Renderer, view: &View, art: &Art) {
     let surface = Surface::textured(image.texture)
         .blended(BlendMode::Half)
         .tinted(view.fog);
+    let time = view.time;
+    let splash = |x: f32, z: f32| {
+        grotto::CRACKS
+            .iter()
+            .map(|&(cx, cz)| (-((x - cx).powi(2) + (z - cz).powi(2)) / 3.0).exp())
+            .sum::<f32>()
+    };
+    let height = |x: f32, z: f32| {
+        grotto::WATER
+            + 0.03 * (x * 1.1 + time * 1.5).sin()
+            + 0.08 * splash(x, z) * (time * 9.0 + x * 3.0 + z * 2.0).sin()
+    };
+    let color = |x: f32, z: f32| {
+        let shimmer = (x * 0.8 + z * 0.5 + time * 1.2).sin() * 10.0 + splash(x, z) * 50.0;
+        [80.0 + shimmer, 100.0 + shimmer, 98.0 + shimmer].map(|c| c.clamp(0.0, 255.0) as u8)
+    };
+    let mut xs = steps(x0, x1 - 0.4, 2.0);
+    xs.push(x1);
+    xs.push(CLIFF_X);
+    let zs = steps(z0, z1, 2.0);
     let density = 12.0;
-    let scroll = view.time * 4.0 * density;
-    let zs = [
-        FALLS_Z - FALLS_HALF_WIDTH,
-        FALLS_Z,
-        FALLS_Z + FALLS_HALF_WIDTH,
-    ];
-    let mut x0 = -96.0;
-    while x0 < CLIFF_X - 0.01 {
-        let x1 = (x0 + 4.0f32).min(CLIFF_X);
-        for zw in zs.windows(2) {
-            let u0 = (x0 * density - scroll).rem_euclid(64.0);
-            let u1 = u0 + (x1 - x0) * density;
-            let v0 = (-zw[1] * density).rem_euclid(64.0);
-            let v1 = v0 + (zw[1] - zw[0]) * density;
-            let at = |x: f32, z: f32| local([x, RIVER_Y, z], origin);
-            let color = [120, 135, 130];
+    for zw in zs.windows(2) {
+        for xw in xs.windows(2) {
+            let (ax, bx, az, bz) = (xw[0], xw[1], zw[0], zw[1]);
+            let mouth = ax >= x1 - 0.01;
+            if mouth && (az < grotto::MOUTH.0 - 0.01 || bz > grotto::MOUTH.1 + 0.01) {
+                continue;
+            }
+            let u0 = (ax * density + time * 2.0).rem_euclid(64.0);
+            let v0 = (-bz * density).rem_euclid(64.0);
+            let (u1, v1) = (u0 + (bx - ax) * density, v0 + (bz - az) * density);
+            let at = |x: f32, z: f32| local([x, height(x, z), z], origin);
             let points = [
-                Point::new(at(x0, zw[1]), color, (u0 as u8, v0 as u8)),
-                Point::new(at(x1, zw[1]), color, (u1 as u8, v0 as u8)),
-                Point::new(at(x0, zw[0]), color, (u0 as u8, v1 as u8)),
-                Point::new(at(x1, zw[0]), color, (u1 as u8, v1 as u8)),
+                Point::new(at(ax, bz), color(ax, bz), (u0 as u8, v0 as u8)),
+                Point::new(at(bx, bz), color(bx, bz), (u1 as u8, v0 as u8)),
+                Point::new(at(ax, az), color(ax, az), (u0 as u8, v1 as u8)),
+                Point::new(at(bx, az), color(bx, az), (u1 as u8, v1 as u8)),
             ];
-            renderer.polygon(&points, surface, 0, 2);
+            renderer.polygon(&points, surface, SURFACE_BIAS, 2);
         }
-        x0 = x1;
+    }
+}
+
+fn cascades(renderer: &mut Renderer, view: &View, art: &Art) {
+    let image = tiled(&art.procedural.waterfall);
+    let mist = &art.procedural.mist;
+    for (index, &(x, z)) in grotto::CRACKS.iter().enumerate() {
+        let top = grotto::CEILING + 1.0;
+        let middle = [x, (top + grotto::WATER) * 0.5, z];
+        if !view.visible(middle, 4.0) {
+            continue;
+        }
+        set_origin(renderer, middle);
+        let half = 0.6;
+        let side = [view.right.0 * half, 0.0, view.right.1 * half];
+        let corner = |sign: f32, y: f32| local([x + side[0] * sign, y, z + side[2] * sign], middle);
+        let density = 20.0;
+        for (layer, (speed, blend, color, tint)) in [
+            (1.0, BlendMode::Half, [150, 160, 165], view.fog),
+            (1.8, BlendMode::Add, [40, 46, 50], BLACK),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let scroll =
+                view.time * speed * 3.5 * density + layer as f32 * 17.0 + index as f32 * 23.0;
+            let v0 = (-scroll).rem_euclid(64.0);
+            let v1 = v0 + (top - grotto::WATER) * density * 0.5;
+            let points = [
+                Point::new(corner(-1.0, top), color, (0, v0 as u8)),
+                Point::new(corner(1.0, top), color, (24, v0 as u8)),
+                Point::new(corner(-1.0, grotto::WATER), color, (0, v1.min(255.0) as u8)),
+                Point::new(corner(1.0, grotto::WATER), color, (24, v1.min(255.0) as u8)),
+            ];
+            let surface = Surface::textured(image.texture).blended(blend).tinted(tint);
+            renderer.polygon(&points, surface, -4, 2);
+        }
+        for puff in 0..4 {
+            let phase = (view.time * 0.35 + puff as f32 / 4.0 + index as f32 * 0.5).fract();
+            let centre = [
+                x + (phase - 0.5) * 0.8,
+                grotto::WATER + 0.2 + phase * 1.2,
+                z,
+            ];
+            let size = 0.8 + phase * 1.6;
+            billboard(
+                renderer,
+                view,
+                mist,
+                centre,
+                (size, size),
+                scaled([40, 44, 46], (1.0 - phase) * (phase * 5.0).min(1.0)),
+                additive(mist),
+                Anchor::Centre,
+            );
+        }
     }
 }
 
@@ -320,7 +549,7 @@ fn pool(renderer: &mut Renderer, view: &View, art: &Art, cells: &[(f32, f32)]) {
             Point::new(at(x0, z0), color(x0, z0), (u0 as u8, v1 as u8)),
             Point::new(at(x1, z0), color(x1, z0), (u1 as u8, v1 as u8)),
         ];
-        renderer.polygon(&points, surface, 0, 2);
+        renderer.polygon(&points, surface, SURFACE_BIAS, 2);
     }
 }
 
@@ -397,13 +626,13 @@ fn shafts(renderer: &mut Renderer, view: &View, list: &[Shaft]) {
 }
 
 fn skylight(renderer: &mut Renderer, view: &View) {
-    let origin = [0.0, 10.0, TEMPLE_Z];
-    if !view.visible(origin, 2.0) {
+    let origin = [0.0, SHRINE_ROOF, TEMPLE_Z];
+    if !view.visible(origin, 2.0) || view.position[1] > SHRINE_ROOF {
         return;
     }
     renderer.fog_enabled = false;
     set_origin(renderer, origin);
-    let at = |x: f32, z: f32| local([x, 10.0, TEMPLE_Z + z], origin);
+    let at = |x: f32, z: f32| local([x, SHRINE_ROOF, TEMPLE_Z + z], origin);
     let color = [240, 238, 210];
     let points = [
         Point::new(at(-1.0, -1.0), color, (0, 0)),
@@ -445,11 +674,11 @@ fn motes(renderer: &mut Renderer, view: &View, art: &Art) {
     }
 }
 
-fn idol(renderer: &mut Renderer, view: &View, art: &Art) {
-    if !view.visible(IDOL, 1.0) {
+fn idol(renderer: &mut Renderer, view: &View, art: &Art, centre: Vec3, metal: Vec3, size: f32) {
+    if !view.visible(centre, 1.0) {
         return;
     }
-    set_origin(renderer, IDOL);
+    set_origin(renderer, centre);
     let top = [0.0, 0.32, 0.0];
     let bottom = [0.0, -0.24, 0.0];
     let ring = [
@@ -458,7 +687,6 @@ fn idol(renderer: &mut Renderer, view: &View, art: &Art) {
         [-0.2, 0.04, 0.0],
         [0.0, 0.04, -0.2],
     ];
-    let gold = [235.0, 178.0, 62.0];
     for index in 0..4 {
         let next = ring[(index + 1) % 4];
         for mut triangle in [[top, ring[index], next], [bottom, next, ring[index]]] {
@@ -470,8 +698,9 @@ fn idol(renderer: &mut Renderer, view: &View, art: &Art) {
             }
             let normal = normalize(normal);
             let light = 0.28 + 0.72 * normal[1].max(0.0) + 0.25 * normal[0].abs();
-            let color = gold.map(|c| (c * light).min(255.0) as u8);
-            let points = triangle.map(|corner| Point::new(local(corner, [0.0; 3]), color, (0, 0)));
+            let color = metal.map(|c| (c * light).min(255.0) as u8);
+            let points = triangle
+                .map(|corner| Point::new(local(scale(corner, size), [0.0; 3]), color, (0, 0)));
             if renderer.backface(&points) {
                 continue;
             }
@@ -485,7 +714,7 @@ fn idol(renderer: &mut Renderer, view: &View, art: &Art) {
             renderer,
             view,
             glow,
-            [IDOL[0] + 0.08, IDOL[1] + 0.22, IDOL[2] - 0.1],
+            [centre[0] + 0.08, centre[1] + 0.22, centre[2] - 0.1],
             (0.6, 0.6),
             scaled([255, 220, 150], sparkle),
             additive(glow),

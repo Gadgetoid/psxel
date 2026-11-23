@@ -26,6 +26,7 @@ pub struct Mix {
     pub drone: Voice,
     pub drips: Voice,
     pub torch: Voice,
+    pub cascade: Voice,
 }
 
 struct Bank {
@@ -73,5 +74,12 @@ impl SoundSystem {
         for (channel, (sound, voice)) in channels.into_iter().enumerate() {
             audio.set_loop_panned(channel, sound, voice.volume, 1.0, voice.pan);
         }
+        audio.set_loop_panned(
+            channels.len(),
+            bank.waterfall,
+            mix.cascade.volume,
+            1.35,
+            mix.cascade.pan,
+        );
     }
 }

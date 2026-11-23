@@ -21,6 +21,7 @@ pub struct Art {
     pub floor: Vec<Image>,
     pub bark: Vec<Image>,
     pub rockface: Vec<Image>,
+    pub cliff: Vec<Image>,
     pub foliage: Image,
     pub canopy: Image,
     pub paving: Image,
@@ -34,6 +35,8 @@ pub struct Art {
     pub trees: Vec<Image>,
     pub bushes: Vec<Image>,
     pub boulders: Vec<Image>,
+    pub treasure: Vec<Image>,
+    pub coins: Vec<Image>,
     pub procedural: Procedural,
 }
 
@@ -68,6 +71,7 @@ impl Art {
             "rockface_2",
             "rockface_3"
         );
+        let cliff = family!(sheet, vram, false, "cliff_jungle_0", "cliff_jungle_1");
         let foliage = sheet.add(vram, sprite!("foliage"), false);
         let canopy = sheet.add(vram, sprite!("canopy"), false);
         let paving = sheet.add(vram, sprite!("wall_tunnel"), false);
@@ -99,11 +103,22 @@ impl Art {
         );
         let bushes = family!(sheet, vram, true, "bush_0", "bush_1", "bush_2", "bush_3");
         let boulders = family!(sheet, vram, true, "rock_0", "rock_1", "rock_2", "rock_3");
+        let treasure = family!(
+            sheet,
+            vram,
+            true,
+            "treasure_0",
+            "treasure_1",
+            "treasure_2",
+            "treasure_3"
+        );
+        let coins = family!(sheet, vram, false, "coins_0", "coins_1", "coins_large");
         Self {
             stone,
             floor,
             bark,
             rockface,
+            cliff,
             foliage,
             canopy,
             paving,
@@ -117,6 +132,8 @@ impl Art {
             trees,
             bushes,
             boulders,
+            treasure,
+            coins,
             procedural: Procedural::build(vram),
         }
     }

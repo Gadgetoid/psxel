@@ -9,7 +9,7 @@ The renderer models the PS1 pipeline rather than imitating its look: a fixed-poi
 The GitHub Pages site builds every web target on each push to `main`:
 
 - `rally/`: PSX Rally, an endless stage with a co-driver, five biomes, day and night, weather, fords, ravines, tunnels, bridges and twelve period liveries.
-- `temple/`: a looping fly-through of a jungle temple with a waterfall, pool and torch-lit idol chamber. Space pauses, C toggles a free camera (WASD, arrows, Q/E), M mutes.
+- `temple/`: a looping fly-through of a jungle temple with a waterfall, pool, a secret crystal cave behind the falls, the cave the falls pour from, with an indoor pool fed by falls from the ceiling, sunken treasure and ruins, and a passage to a jade idol ruin in a sinkhole, a blocked jungle tunnel at the end of the causeway, a torch-lit idol chamber with a flooded crypt beneath, and a shrine on top lit by braziers; a sunken treasure waits in the pool. Space pauses, C toggles a free camera (WASD, arrows, Q/E), M mutes.
 - `demo/`: the presenter test card.
 
 Useful URL options for the rally: `?seed=N` picks a stage, `?at=N` starts at a track index, `?stats=1` shows frame timing and location, `?webgl` forces the WebGL backend.

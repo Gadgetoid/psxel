@@ -23,6 +23,8 @@ enum Slot {
     Mote,
     Water,
     Waterfall,
+    Crystal,
+    Cold,
 }
 
 struct Canvas {
@@ -174,6 +176,29 @@ fn radial(size: usize, power: f32, grain: f32, seed: u64) -> Canvas {
     canvas
 }
 
+fn crystal(seed: u64) -> Canvas {
+    let mut canvas = Canvas::new(32, 32);
+    let mut rng = Rng::new(seed);
+    for _ in 0..6 {
+        let base = 16.0 + rng.range(-8.0, 8.0);
+        let lean = rng.range(-0.35, 0.35);
+        let height = rng.range(14.0, 30.0);
+        let width = rng.range(2.0, 4.0);
+        for step in 0..height as i32 {
+            let t = step as f32 / height;
+            let centre = base + lean * step as f32;
+            let half = width * (1.0 - t);
+            let y = 31 - step;
+            for x in (centre - half).floor() as i32..=(centre + half).ceil() as i32 {
+                let side = (x as f32 + 0.5 - centre) / half.max(0.5);
+                let light = 0.55 - side * 0.35 + t * 0.35;
+                canvas.set(x, y, 1 + (light.clamp(0.0, 0.999) * 14.99) as u8);
+            }
+        }
+    }
+    canvas
+}
+
 fn water() -> Canvas {
     let mut canvas = Canvas::new(64, 64);
     for y in 0..64 {
@@ -220,6 +245,8 @@ pub struct Procedural {
     pub fern: Image,
     pub flames: [Image; 4],
     pub glow: Image,
+    pub cold_glow: Image,
+    pub crystal: Image,
     pub mist: Image,
     pub mote: Image,
     pub water: Image,
@@ -237,6 +264,7 @@ impl Procedural {
         radial(16, 2.5, 0.0, 0).blit(vram, 192, 64);
         water().blit(vram, 0, 128);
         waterfall(9).blit(vram, 64, 128);
+        crystal(21).blit(vram, 224, 64);
 
         let green = |dark: Rgb, light: Rgb| {
             palette(&[
@@ -265,6 +293,18 @@ impl Procedural {
             &palette(&[(1, [8, 10, 11], SEMI), (15, [210, 222, 230], SEMI)]),
         );
         vram.write_clut(
+            clut(Slot::Crystal),
+            &palette(&[
+                (1, [10, 40, 60], 0),
+                (8, [60, 170, 200], 0),
+                (15, [225, 255, 255], 0),
+            ]),
+        );
+        vram.write_clut(
+            clut(Slot::Cold),
+            &palette(&[(1, [2, 6, 8], SEMI), (15, [120, 230, 255], SEMI)]),
+        );
+        vram.write_clut(
             clut(Slot::Mote),
             &palette(&[(1, [20, 18, 10], SEMI), (15, [255, 240, 190], SEMI)]),
         );
@@ -281,6 +321,8 @@ impl Procedural {
             fern: image(Slot::Fern, 0, 0, 64, 48),
             flames: [0, 1, 2, 3].map(|frame| image(Slot::Flame, 192 + frame * 16, 0, 16, 32)),
             glow: image(Slot::Glow, 192, 32, 32, 32),
+            cold_glow: image(Slot::Cold, 192, 32, 32, 32),
+            crystal: image(Slot::Crystal, 224, 64, 32, 32),
             mist: image(Slot::Mist, 224, 32, 32, 32),
             mote: image(Slot::Mote, 192, 64, 16, 16),
             water: image(Slot::Water, 0, 128, 64, 64),

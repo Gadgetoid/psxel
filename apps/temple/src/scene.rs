@@ -2,10 +2,17 @@ use std::f32::consts::TAU;
 
 use crate::art::Art;
 use crate::biome::Rgb;
-use crate::lighting::{sun_direction, Lighting, Torch};
-use crate::mesh::{add, scale, steps, Builder, Cell, Material, Mesh, Vec3, Zone};
+use crate::cave;
+use crate::crypt;
+use crate::grotto;
+use crate::lighting::{sun_direction, Light, LightKind, Lighting};
+use crate::mesh::{
+    add, cross, length, normalize, scale, steps, sub, Builder, Cell, Material, Mesh, Vec3, Zone,
+};
 use crate::path::{key, Path};
 use crate::rng::{hash_float, Rng};
+use crate::ruins;
+use crate::secrets;
 use crate::terrain::{
     cliff_x, ground_height, plateau_height, pool_distance, smoothstep, value_noise, CLIFF_TOP,
     CLIFF_X, FALLS_Z, TEMPLE_Z, WATER_Y,
@@ -17,6 +24,10 @@ pub const ALTAR_TOP: f32 = 1.1;
 const CANOPY_CELL: f32 = 6.0;
 const CANOPY_HEIGHT: f32 = 20.0;
 const TREELINE_ROWS: usize = 4;
+const TIER_MOTIFS: [usize; 5] = [0, 0, 2, 1, 3];
+const BRAZIER_X: f32 = 2.5;
+const BRAZIER_Z: f32 = TEMPLE_Z + 2.5;
+pub const SHRINE_ROOF: f32 = TIER_Y[5] + 5.0;
 const GIANT_TREES: [(f32, f32); 6] = [
     (-24.0, 44.0),
     (26.0, 22.0),
@@ -53,29 +64,46 @@ pub struct Scene {
 }
 
 pub fn tour() -> Path {
-    Path::new(vec![
+    let mut keys = vec![
         key([30.0, 42.0, -20.0], [0.0, 6.0, 40.0], 5.6),
         key([16.0, 18.0, -4.0], [0.0, 8.0, 40.0], 4.8),
         key([6.0, 6.5, 8.0], [0.0, 9.0, 34.0], 4.0),
         key([-10.0, 4.5, 10.0], [-30.0, 5.0, 14.0], 3.6),
         key([-21.0, 2.2, 9.0], [-38.0, 8.0, 14.0], 3.2),
         key([-28.0, 1.6, 15.0], [-38.0, 12.0, 14.0], 2.4),
+    ];
+    keys.extend(cave::keys());
+    keys.extend(grotto::keys());
+    keys.extend([
         key([-27.0, 5.5, 28.0], [-14.0, 2.0, 40.0], 3.2),
         key([-24.0, 2.2, 40.0], [-10.0, 2.0, 40.0], 2.4),
         key([-14.0, 2.0, 40.0], [0.0, 1.8, 40.0], 2.0),
         key([-8.0, 2.0, 40.0], [0.0, 1.5, 40.0], 1.6),
         key([-3.2, 2.4, 37.8], [0.0, 1.4, 40.0], 1.28),
         key([0.0, 3.0, 36.6], [0.0, 1.3, 40.0], 1.28),
-        key([3.2, 2.4, 37.8], [8.0, 2.0, 40.0], 1.44),
+    ]);
+    keys.extend(crypt::keys());
+    keys.extend([
         key([8.0, 2.0, 40.0], [20.0, 2.0, 40.0], 1.76),
         key([14.0, 2.0, 40.0], [26.0, 3.0, 40.0], 2.24),
         key([22.0, 3.2, 40.0], [30.0, 6.0, 36.0], 2.8),
         key([30.0, 12.0, 30.0], [0.0, 10.0, 40.0], 4.0),
+        key([12.0, 17.5, 26.0], [0.0, 16.0, 40.0], 3.2),
+        key([0.0, 16.0, 30.5], [0.0, 15.4, 42.0], 1.4),
+        key([6.0, 24.0, 28.0], [0.0, 14.0, 40.0], 3.0),
         key([40.0, 36.0, 8.0], [0.0, 8.0, 40.0], 5.2),
-    ])
+    ]);
+    Path::new(keys)
 }
 
 pub fn insideness(position: Vec3) -> f32 {
+    temple_amount(position)
+        .max(cave::amount(position))
+        .max(grotto::amount(position))
+        .max(crypt::amount(position))
+}
+
+pub fn temple_amount(position: Vec3) -> f32 {
     let within =
         position[0].abs() < 15.0 && (position[2] - TEMPLE_Z).abs() < 6.5 && position[1] < 7.5;
     if within {
@@ -86,7 +114,11 @@ pub fn insideness(position: Vec3) -> f32 {
 }
 
 pub fn build(art: &Art, path: &Path) -> Scene {
-    let lighting = Lighting { torches: torches() };
+    let mut lights = torches();
+    lights.extend(cave::lights());
+    lights.extend(grotto::lights());
+    lights.extend(crypt::lights());
+    let lighting = Lighting { lights };
     let samples = path.points(48);
     let mesh = {
         let mut builder = Builder::new(&lighting);
@@ -97,16 +129,32 @@ pub fn build(art: &Art, path: &Path) -> Scene {
         shrine(&mut builder, art);
         interior(&mut builder, art);
         brackets(&mut builder, &lighting);
-        giant_trees(&mut builder, art);
+        giant_trees(&mut builder, art, &samples);
+        secrets::geometry(&mut builder, art);
+        ruins::geometry(&mut builder, art, &samples);
         canopy(&mut builder, art, &samples);
+        cave::geometry(&mut builder, art);
+        grotto::geometry(&mut builder, art);
+        crypt::geometry(&mut builder, art);
         builder.build()
     };
-    let billboards = props(art, &samples, &lighting);
+    let mut billboards = props(art, &samples, &lighting);
+    cave::crystals(art, &mut billboards);
+    secrets::props(art, &mut billboards);
+    ruins::props(art, &mut billboards);
+    secrets::treasure(art, &lighting, &mut billboards);
+    cave::treasure(art, &lighting, &mut billboards);
+    crypt::treasure(art, &lighting, &mut billboards);
+    grotto::props(art, &lighting, &mut billboards);
+    crowns(art, &samples, &lighting, &mut billboards);
+    let mut shafts = shafts();
+    shafts.push(secrets::shaft());
+    shafts.extend(grotto::shafts());
     Scene {
         mesh,
         billboards,
         pool: pool_cells(),
-        shafts: shafts(),
+        shafts,
         lighting,
     }
 }
@@ -134,25 +182,35 @@ fn tier_half(tier: usize) -> f32 {
     14.0 - 2.0 * tier as f32
 }
 
-fn torches() -> Vec<Torch> {
+fn torches() -> Vec<Light> {
     let mut list = Vec::new();
     for side in [-1.0f32, 1.0] {
         for z in [37.0, 43.0] {
-            list.push(Torch {
+            list.push(Light {
                 position: [side * 14.6, 2.6, z],
                 zone: Zone::Exterior,
+                kind: LightKind::Torch,
             });
         }
-        list.push(Torch {
+        list.push(Light {
             position: [side * 10.0, 2.4, TEMPLE_Z - side * 1.65],
             zone: Zone::Interior,
+            kind: LightKind::Torch,
         });
         for z in [34.4, 45.6] {
-            list.push(Torch {
+            list.push(Light {
                 position: [side * 5.6, 3.0, z],
                 zone: Zone::Interior,
+                kind: LightKind::Torch,
             });
         }
+    }
+    for side in [-1.0f32, 1.0] {
+        list.push(Light {
+            position: [side * BRAZIER_X, TIER_Y[5] + 1.4, BRAZIER_Z],
+            zone: Zone::Interior,
+            kind: LightKind::Torch,
+        });
     }
     list
 }
@@ -171,6 +229,14 @@ fn shafts() -> Vec<Shaft> {
         }
     };
     vec![
+        Shaft {
+            top: [0.0, SHRINE_ROOF - 0.2, TEMPLE_Z],
+            bottom: [0.0, TIER_Y[5], TEMPLE_Z],
+            top_width: 0.8,
+            bottom_width: 0.95,
+            top_color: [64, 60, 44],
+            bottom_color: [40, 38, 28],
+        },
         Shaft {
             top: [0.0, 7.0, TEMPLE_Z],
             bottom: [0.0, 0.0, TEMPLE_Z],
@@ -204,7 +270,7 @@ fn ground(builder: &mut Builder, art: &Art) {
         .map(|image| Material::textured(image).tinted([0.75, 0.8, 0.72]))
         .collect();
     let surface = |middle: Vec3| {
-        if middle[1] < WATER_Y + 0.25 {
+        if middle[1] < WATER_Y + 0.25 && pool_distance(middle[0], middle[2]) < 1.3 {
             riverbed
         } else if pool_distance(middle[0], middle[2]) < 1.5 {
             swamp
@@ -214,7 +280,7 @@ fn ground(builder: &mut Builder, art: &Art) {
     };
     builder.floor(
         Zone::Exterior,
-        &steps(-42.0, 98.0, 4.0),
+        &steps(-42.0, 102.0, 4.0),
         &steps(-70.0, 110.0, 4.0),
         ground_height,
         true,
@@ -224,7 +290,7 @@ fn ground(builder: &mut Builder, art: &Art) {
             (!under_temple).then(|| Cell::new(surface(middle)))
         },
     );
-    let mut xs = steps(-98.0, -42.0, 4.0);
+    let mut xs = steps(-102.0, -42.0, 4.0);
     xs.push(CLIFF_X);
     builder.floor(
         Zone::Exterior,
@@ -233,22 +299,62 @@ fn ground(builder: &mut Builder, art: &Art) {
         plateau_height,
         true,
         16.0,
-        |middle| Some(Cell::new(surface(middle))),
+        |middle| {
+            let hidden = secrets::near_ruin(middle[0], middle[2], 0.5);
+            (!hidden).then(|| Cell::new(surface(middle)))
+        },
     );
+    let outer = |x: f32, z: f32| floor_height(x, z) - 0.6;
+    for (xs, zs) in [
+        (steps(102.0, 150.0, 12.0), steps(-70.0, 110.0, 12.0)),
+        (steps(-150.0, -102.0, 12.0), steps(-70.0, 110.0, 12.0)),
+        (steps(-150.0, 150.0, 12.0), steps(-130.0, -70.0, 12.0)),
+        (steps(-150.0, 150.0, 12.0), steps(110.0, 158.0, 12.0)),
+    ] {
+        builder.floor(Zone::Exterior, &xs, &zs, outer, true, 12.0, |middle| {
+            Some(Cell::new(pick(&floors, middle, 3)))
+        });
+    }
 }
 
 fn cliff(builder: &mut Builder, art: &Art) {
     let rocks: Vec<Material> = art
-        .rockface
+        .cliff
         .iter()
-        .map(|image| Material::textured(image).tinted([1.25, 1.25, 1.2]))
+        .map(|image| Material::textured(image).tinted([1.1, 1.1, 1.05]))
         .collect();
-    let rows = [-3.0, 0.0, 3.0, 6.0, 9.0, 12.0, 14.5, CLIFF_TOP];
     for zw in steps(-70.0, 110.0, 2.0).windows(2) {
         let (z0, z1) = (zw[0], zw[1]);
+        let top = |z: f32| plateau_height(CLIFF_X, z);
+        let tall = top(z0).max(top(z1)) > CLIFF_TOP + 3.5;
+        let mut rows = vec![-3.0, 0.0, 3.0, 6.0, 9.0, 12.0, 14.5, CLIFF_TOP];
+        if tall {
+            rows.push(CLIFF_TOP + 3.0);
+        }
+        rows.push(f32::MAX);
         for row in rows.windows(2) {
             let (y0, y1) = (row[0], row[1]);
-            let at = |z: f32, y: f32| [cliff_x(z, y), y, z];
+            let level = |z: f32, y: f32| if y == f32::MAX { top(z) } else { y };
+            if y1 == f32::MAX && top(z0) <= CLIFF_TOP + 0.05 && top(z1) <= CLIFF_TOP + 0.05 {
+                continue;
+            }
+            let lip = if y1 == f32::MAX {
+                top(z0).max(top(z1))
+            } else {
+                y1
+            };
+            if cave::in_mouth(z0, z1, y0, lip) || grotto::in_mouth(z0, z1, y0, lip) {
+                continue;
+            }
+            let y1 = lip;
+            let at = |z: f32, y: f32| {
+                let height = if y == lip && row[1] == f32::MAX {
+                    level(z, f32::MAX)
+                } else {
+                    y
+                };
+                [cliff_x(z, height), height, z]
+            };
             let u0 = (z0 * 16.0).rem_euclid(64.0);
             let v0 = (-y1 * 16.0).rem_euclid(64.0);
             let (u1, v1) = (u0 + (z1 - z0) * 16.0, v0 + (y1 - y0) * 16.0);
@@ -292,14 +398,17 @@ fn pyramid(builder: &mut Builder, art: &Art) {
                     if door_side && along < 4.0 {
                         return Some(Cell::panel(&art.serpent, tint));
                     }
-                    let carved = tier > 0
-                        && hash_float(
-                            5,
-                            (middle[0] * 4.0 + 400.0) as u64,
-                            (middle[2] * 4.0 + middle[1] * 31.0 + 400.0) as u64,
-                        ) < 0.22;
+                    let offset = if side % 2 == 0 {
+                        middle[0]
+                    } else {
+                        middle[2] - TEMPLE_Z
+                    }
+                    .abs();
+                    let rhythm = (offset.round() as i32) % 4 == 1;
+                    let clear_of_stairs = side != 0 || offset > 4.0;
+                    let carved = tier > 0 && rhythm && clear_of_stairs && offset < half - 1.5;
                     Some(if carved {
-                        Cell::panel(&pick(&art.carvings, middle, 6), tint)
+                        Cell::panel(&art.carvings[TIER_MOTIFS[tier]], moss(middle, 0.4))
                     } else {
                         Cell::new(pick(&stones, middle, 4).tinted(tint))
                     })
@@ -389,87 +498,225 @@ fn stairs(builder: &mut Builder, art: &Art) {
 
 fn shrine(builder: &mut Builder, art: &Art) {
     let stone = Material::textured(&art.stone[1]);
-    let dark = Material::flat([4, 3, 2]);
+    let paving = Material::textured(&art.paving);
     let (y0, y1) = (TIER_Y[5], TIER_Y[5] + 5.0);
+    let (door, lintel, ceiling) = (2.0, y0 + 3.0, y1 - 0.6);
+    let (outer, inner) = (4.0, 3.4);
     let corners = [
-        (-4.0, TEMPLE_Z - 4.0),
-        (4.0, TEMPLE_Z - 4.0),
-        (4.0, TEMPLE_Z + 4.0),
-        (-4.0, TEMPLE_Z + 4.0),
+        (-outer, TEMPLE_Z - outer),
+        (outer, TEMPLE_Z - outer),
+        (outer, TEMPLE_Z + outer),
+        (-outer, TEMPLE_Z + outer),
     ];
     for side in 0..4 {
         builder.wall(
             Zone::Exterior,
             corners[side],
             corners[(side + 1) % 4],
-            &[y0, y0 + 3.0, y1],
+            &[y0, lintel, y1],
             2.0,
             24.0,
             |middle| {
                 let tint = moss(middle, 0.8);
-                if side == 0 && middle[0].abs() < 2.0 && middle[1] < y0 + 3.0 {
+                if side == 0 && middle[0].abs() < door && middle[1] < lintel {
                     None
-                } else if middle[1] > y0 + 3.0 {
-                    Some(Cell::panel(&pick(&art.carvings, middle, 8), tint))
+                } else if middle[1] > lintel {
+                    let offset = if side % 2 == 0 {
+                        middle[0]
+                    } else {
+                        middle[2] - TEMPLE_Z
+                    }
+                    .abs();
+                    let motif = if offset < 2.0 { 1 } else { 0 };
+                    Some(Cell::panel(&art.carvings[motif], moss(middle, 0.4)))
                 } else {
                     Some(Cell::new(stone.tinted(tint)))
                 }
             },
         );
     }
+    let open_grid = |half: f32| vec![-half, -2.0, -1.0, 1.0, 2.0, half];
+    let oculus = |middle: Vec3| middle[0].abs() < 1.0 && (middle[2] - TEMPLE_Z).abs() < 1.0;
+    let outer_z: Vec<f32> = open_grid(outer).iter().map(|z| z + TEMPLE_Z).collect();
     builder.floor(
         Zone::Exterior,
-        &steps(-4.0, 4.0, 2.0),
-        &steps(TEMPLE_Z - 4.0, TEMPLE_Z + 4.0, 2.0),
+        &open_grid(outer),
+        &outer_z,
         |_, _| y1,
         true,
         16.0,
-        |middle| Some(Cell::new(stone.tinted(moss(middle, 1.2)))),
+        |middle| (!oculus(middle)).then(|| Cell::new(stone.tinted(moss(middle, 1.2)))),
     );
-    let back = TEMPLE_Z - 3.2;
-    let front = TEMPLE_Z - 4.0;
-    let rows = [y0, y0 + 3.0];
+
+    let front = TEMPLE_Z - inner;
+    let back = TEMPLE_Z + inner;
+    let threshold = TEMPLE_Z - outer;
     builder.wall(
         Zone::Exterior,
-        (-2.0, back),
-        (2.0, back),
-        &rows,
-        4.0,
-        24.0,
-        |_| Some(Cell::new(dark)),
-    );
-    builder.wall(
-        Zone::Exterior,
-        (-2.0, front),
-        (-2.0, back),
-        &rows,
+        (-door, threshold),
+        (-door, front),
+        &[y0, lintel],
         1.0,
         24.0,
-        |_| Some(Cell::new(dark)),
+        |middle| Some(Cell::new(stone.tinted(moss(middle, 0.6)))),
     );
     builder.wall(
         Zone::Exterior,
-        (2.0, back),
-        (2.0, front),
-        &rows,
+        (door, front),
+        (door, threshold),
+        &[y0, lintel],
         1.0,
         24.0,
-        |_| Some(Cell::new(dark)),
+        |middle| Some(Cell::new(stone.tinted(moss(middle, 0.6)))),
     );
     builder.floor(
         Zone::Exterior,
-        &[-2.0, 2.0],
-        &[front, back],
-        |_, _| y0 + 3.0,
+        &[-door, door],
+        &[threshold, front],
+        |_, _| lintel,
         false,
         24.0,
-        |_| Some(Cell::new(dark)),
+        |_| Some(Cell::new(stone)),
     );
+    builder.floor(
+        Zone::Exterior,
+        &[-door, 0.0, door],
+        &[threshold, front],
+        |_, _| y0,
+        true,
+        24.0,
+        |middle| Some(Cell::new(paving.tinted(moss(middle, 0.8)))),
+    );
+
+    let plain = |middle: Vec3| Some(Cell::new(stone.tinted(moss(middle, 0.5))));
+    builder.wall(
+        Zone::Interior,
+        (inner, front),
+        (door, front),
+        &[y0, lintel, ceiling],
+        2.0,
+        24.0,
+        plain,
+    );
+    builder.wall(
+        Zone::Interior,
+        (door, front),
+        (-door, front),
+        &[lintel, ceiling],
+        4.0,
+        24.0,
+        plain,
+    );
+    builder.wall(
+        Zone::Interior,
+        (-door, front),
+        (-inner, front),
+        &[y0, lintel, ceiling],
+        2.0,
+        24.0,
+        plain,
+    );
+    builder.wall(
+        Zone::Interior,
+        (-inner, back),
+        (inner, back),
+        &[y0, 16.0, ceiling],
+        2.4,
+        24.0,
+        plain,
+    );
+    for (a, b, carving) in [
+        ((inner, back), (inner, front), 3),
+        ((-inner, front), (-inner, back), 2),
+    ] {
+        builder.wall(
+            Zone::Interior,
+            a,
+            b,
+            &[y0, y0 + 1.0, y0 + 3.4, ceiling],
+            2.3,
+            24.0,
+            |middle| {
+                if middle[1] > y0 + 1.0
+                    && middle[1] < y0 + 3.4
+                    && (middle[2] - TEMPLE_Z).abs() < 1.5
+                {
+                    Some(Cell::panel(&art.carvings[carving], [1.0; 3]))
+                } else {
+                    plain(middle)
+                }
+            },
+        );
+    }
+    builder.wall(
+        Zone::Interior,
+        (-1.5, back - 0.05),
+        (1.5, back - 0.05),
+        &[y0 + 0.6, y0 + 3.6],
+        3.0,
+        24.0,
+        |_| Some(Cell::panel(&art.carvings[1], [1.05, 1.0, 0.9]).biased(cave::OVERLAY_BIAS)),
+    );
+    let inner_z: Vec<f32> = open_grid(inner).iter().map(|z| z + TEMPLE_Z).collect();
+    builder.floor(
+        Zone::Interior,
+        &open_grid(inner),
+        &inner_z,
+        |_, _| y0,
+        true,
+        24.0,
+        |middle| (!oculus(middle)).then(|| Cell::new(paving.tinted(moss(middle, 0.6)))),
+    );
+    builder.floor(
+        Zone::Interior,
+        &open_grid(inner),
+        &inner_z,
+        |_, _| ceiling,
+        false,
+        24.0,
+        |middle| (!oculus(middle)).then(|| Cell::new(stone)),
+    );
+    for (a, b) in [
+        ((-1.0, TEMPLE_Z - 1.0), (-1.0, TEMPLE_Z + 1.0)),
+        ((1.0, TEMPLE_Z + 1.0), (1.0, TEMPLE_Z - 1.0)),
+        ((1.0, TEMPLE_Z - 1.0), (-1.0, TEMPLE_Z - 1.0)),
+        ((-1.0, TEMPLE_Z + 1.0), (1.0, TEMPLE_Z + 1.0)),
+    ] {
+        builder.wall(Zone::Interior, a, b, &[ceiling, y1], 2.0, 24.0, |_| {
+            Some(Cell::new(stone))
+        });
+    }
+    for (min, max) in [
+        ([-1.3, TEMPLE_Z - 1.3], [1.3, TEMPLE_Z - 1.0]),
+        ([-1.3, TEMPLE_Z + 1.0], [1.3, TEMPLE_Z + 1.3]),
+        ([-1.3, TEMPLE_Z - 1.0], [-1.0, TEMPLE_Z + 1.0]),
+        ([1.0, TEMPLE_Z - 1.0], [1.3, TEMPLE_Z + 1.0]),
+    ] {
+        builder.block(
+            Zone::Interior,
+            [min[0], y0, min[1]],
+            [max[0], y0 + 0.3, max[1]],
+            24.0,
+            paving,
+        );
+    }
+    for side in [-1.0f32, 1.0] {
+        let (x, z) = (side * BRAZIER_X, BRAZIER_Z);
+        builder.block(
+            Zone::Interior,
+            [x - 0.35, y0, z - 0.35],
+            [x + 0.35, y0 + 0.9, z + 0.35],
+            24.0,
+            stone,
+        );
+    }
+
+    let comb_z = TEMPLE_Z + 3.0;
     let comb = [
-        (-3.0, TEMPLE_Z - 0.6),
-        (3.0, TEMPLE_Z - 0.6),
-        (3.0, TEMPLE_Z + 0.6),
-        (-3.0, TEMPLE_Z + 0.6),
+        (-3.0, comb_z - 0.6),
+        (3.0, comb_z - 0.6),
+        (3.0, comb_z + 0.6),
+        (-3.0, comb_z + 0.6),
     ];
     for side in 0..4 {
         builder.wall(
@@ -492,7 +739,7 @@ fn shrine(builder: &mut Builder, art: &Art) {
     builder.floor(
         Zone::Exterior,
         &steps(-3.0, 3.0, 2.0),
-        &[TEMPLE_Z - 0.6, TEMPLE_Z + 0.6],
+        &[comb_z - 0.6, comb_z + 0.6],
         |_, _| y1 + 3.0,
         true,
         24.0,
@@ -533,7 +780,10 @@ fn interior(builder: &mut Builder, art: &Art) {
         let corridor = |middle: Vec3| {
             let carved = middle[1] > 2.0 && (middle[0].abs() as i32 / 2) % 2 == 0;
             Some(if carved {
-                Cell::panel(&pick(&art.carvings, middle, 12), damp(middle))
+                Cell::panel(
+                    &art.carvings[(middle[0].abs() as usize / 4) % 2 * 2 + 1],
+                    damp(middle),
+                )
             } else {
                 Cell::new(pick(&stones, middle, 13).tinted(damp(middle)))
             })
@@ -567,7 +817,10 @@ fn interior(builder: &mut Builder, art: &Art) {
         |_, _| 0.0,
         true,
         24.0,
-        |middle| Some(Cell::new(paving.tinted(damp(middle)))),
+        |middle| {
+            (!crypt::in_stairwell(middle[0], middle[2]))
+                .then(|| Cell::new(paving.tinted(damp(middle))))
+        },
     );
     let ceiling_x = [-6.0, -4.0, -2.0, -1.0, 1.0, 2.0, 4.0, 6.0];
     let ceiling_z: Vec<f32> = ceiling_x.iter().map(|x| x + TEMPLE_Z).collect();
@@ -602,7 +855,14 @@ fn interior(builder: &mut Builder, art: &Art) {
                 if door {
                     None
                 } else if middle[1] > 5.5 {
-                    Some(Cell::panel(&pick(&art.carvings, middle, 15), [0.9; 3]))
+                    Some(Cell::panel(
+                        &art.carvings[if (middle[0].abs() + (middle[2] - TEMPLE_Z).abs()) < 6.5 {
+                            0
+                        } else {
+                            2
+                        }],
+                        [0.9; 3],
+                    ))
                 } else {
                     Some(Cell::new(pick(&stones, middle, 16).tinted(damp(middle))))
                 }
@@ -616,9 +876,15 @@ fn interior(builder: &mut Builder, art: &Art) {
         ((-1.0, TEMPLE_Z + 1.0), (1.0, TEMPLE_Z + 1.0)),
     ];
     for (a, b) in hole {
-        builder.wall(Zone::Interior, a, b, &[7.0, 10.0], 2.0, 24.0, |_| {
-            Some(Cell::new(stones[2]))
-        });
+        builder.wall(
+            Zone::Interior,
+            a,
+            b,
+            &[7.0, 10.5, TIER_Y[5]],
+            2.0,
+            24.0,
+            |_| Some(Cell::new(stones[2])),
+        );
     }
     for (x, z) in [(-4.2, 35.8), (4.2, 35.8), (-4.2, 44.2), (4.2, 44.2)] {
         builder.block(
@@ -629,17 +895,22 @@ fn interior(builder: &mut Builder, art: &Art) {
             stones[3],
         );
     }
-    builder.block(
+    builder.dressed_block(
         Zone::Interior,
         [-1.0, 0.0, TEMPLE_Z - 1.0],
         [1.0, ALTAR_TOP, TEMPLE_Z + 1.0],
         24.0,
-        paving,
+        [Cell::new(paving); 4],
+        Cell::new(Material::textured(&art.coins[2])),
     );
 }
 
 fn brackets(builder: &mut Builder, lighting: &Lighting) {
-    for torch in &lighting.torches {
+    for torch in lighting
+        .lights
+        .iter()
+        .filter(|light| light.kind == LightKind::Torch)
+    {
         let [x, y, z] = torch.position;
         builder.block(
             torch.zone,
@@ -651,12 +922,56 @@ fn brackets(builder: &mut Builder, lighting: &Lighting) {
     }
 }
 
-fn giant_trees(builder: &mut Builder, art: &Art) {
+fn path_clear(samples: &[Vec3], x: f32, z: f32, bottom: f32, top: f32, radius: f32) -> bool {
+    samples.iter().all(|point| {
+        (point[0] - x).hypot(point[2] - z) > radius + 1.5
+            || point[1] > top + 1.5
+            || point[1] < bottom - 1.5
+    })
+}
+
+fn branches(samples: &[Vec3]) -> Vec<(Vec3, Vec3)> {
+    let mut list = Vec::new();
+    for (index, &(x, z)) in GIANT_TREES.iter().enumerate() {
+        let (top, _) = giant_top(x, z, samples);
+        let base = ground_height(x, z);
+        for branch in 0..3 {
+            let height = base + 7.0 + branch as f32 * 3.2;
+            if height > top - 1.5 {
+                continue;
+            }
+            let angle = index as f32 * 1.7 + branch as f32 * 2.1;
+            let reach = 4.5 + hash_float(71, index as u64, branch) * 2.5;
+            let (dx, dz) = (angle.cos(), -angle.sin());
+            let start = [x + dx * 0.9, height, z + dz * 0.9];
+            let end = [
+                start[0] + dx * reach,
+                height + reach * 0.25,
+                start[2] + dz * reach,
+            ];
+            let tip_clear = path_clear(samples, end[0], end[2], height - 1.0, end[1] + 1.0, 1.0);
+            if tip_clear {
+                list.push((start, end));
+            }
+        }
+    }
+    list
+}
+
+fn giant_top(x: f32, z: f32, samples: &[Vec3]) -> (f32, bool) {
+    if canopy_clear(x, z, samples) {
+        (ground_height(x, z) + 13.0, true)
+    } else {
+        (canopy_height(x, z) - 0.6, false)
+    }
+}
+
+fn giant_trees(builder: &mut Builder, art: &Art, samples: &[Vec3]) {
     const SIDES: usize = 8;
     for (index, &(x, z)) in GIANT_TREES.iter().enumerate() {
         let bark = Material::textured(&art.bark[index % art.bark.len()]);
         let base = ground_height(x, z) - 0.5;
-        let top = ground_height(x, z) + CANOPY_HEIGHT + 1.0;
+        let (top, _) = giant_top(x, z, samples);
         let rows = steps(base, top, 3.0);
         let radius = |y: f32| 1.6 - 0.6 * ((y - base) / (top - base)).sqrt();
         let twist = index as f32;
@@ -674,10 +989,10 @@ fn giant_trees(builder: &mut Builder, art: &Art) {
                 builder.quad(
                     Zone::Exterior,
                     [
-                        at(angle0, y1),
                         at(angle1, y1),
-                        at(angle0, y0),
+                        at(angle0, y1),
                         at(angle1, y0),
+                        at(angle0, y0),
                     ],
                     [(u0, v0), (u0 + 16.0, v0), (u0, v1), (u0 + 16.0, v1)],
                     bark,
@@ -699,6 +1014,101 @@ fn giant_trees(builder: &mut Builder, art: &Art) {
             );
         }
     }
+    for (start, end) in branches(samples) {
+        let bark = Material::textured(&art.bark[1]).double_sided();
+        let axis = normalize(sub(end, start));
+        let across = normalize(cross(axis, [0.0, 1.0, 0.0]));
+        let up = cross(across, axis);
+        let ring = |centre: Vec3, radius: f32, side: usize| {
+            let angle = (side as f32 + 0.5) * TAU / 4.0;
+            add(
+                centre,
+                add(
+                    scale(across, angle.cos() * radius),
+                    scale(up, angle.sin() * radius),
+                ),
+            )
+        };
+        let span = length(sub(end, start)) * 16.0;
+        for side in 0..4 {
+            let next = (side + 1) % 4;
+            builder.quad(
+                Zone::Exterior,
+                [
+                    ring(start, 0.55, side),
+                    ring(end, 0.15, side),
+                    ring(start, 0.55, next),
+                    ring(end, 0.15, next),
+                ],
+                [(0.0, 0.0), (span, 0.0), (0.0, 16.0), (span, 16.0)],
+                bark,
+            );
+        }
+    }
+}
+
+fn crowns(art: &Art, samples: &[Vec3], lighting: &Lighting, list: &mut Vec<Billboard>) {
+    for (index, (start, end)) in branches(samples).into_iter().enumerate() {
+        for (step, t) in [0.45f32, 0.75, 1.0].into_iter().enumerate() {
+            let anchor = add(start, scale(sub(end, start), t));
+            let ground = ground_height(anchor[0], anchor[2]);
+            let length = (3.0 + hash_float(73, index as u64, step as u64) * 4.0)
+                .min(anchor[1] - ground - 1.0);
+            if length < 1.5
+                || !path_clear(
+                    samples,
+                    anchor[0],
+                    anchor[2],
+                    anchor[1] - length,
+                    anchor[1],
+                    0.6,
+                )
+            {
+                continue;
+            }
+            let lit = lighting.billboard(
+                [anchor[0], anchor[1] - length * 0.5, anchor[2]],
+                Zone::Exterior,
+            );
+            list.push(Billboard {
+                image: art.vines[(index + step) % art.vines.len()],
+                position: [anchor[0], anchor[1] + 0.2, anchor[2]],
+                width: length * 0.8,
+                height: length,
+                color: [0, 1, 2].map(|c| (lit[c] as f32 * [0.82, 1.0, 0.8][c]) as u8),
+                hanging: true,
+            });
+        }
+    }
+    for &(x, z) in &GIANT_TREES {
+        let (top, exposed) = giant_top(x, z, samples);
+        if !exposed {
+            continue;
+        }
+        for (index, (dx, dy, dz, size)) in [
+            (0.0, -2.0, 0.0, 10.0),
+            (2.5, -3.5, 1.5, 7.0),
+            (-2.5, -3.0, -1.0, 7.5),
+            (0.5, 0.5, -2.0, 6.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let position = [x + dx, top + dy, z + dz];
+            let lit = lighting.billboard(
+                [position[0], position[1] + size * 0.4, position[2]],
+                Zone::Exterior,
+            );
+            list.push(Billboard {
+                image: art.bushes[index % art.bushes.len()],
+                position,
+                width: size,
+                height: size * 0.75,
+                color: [0, 1, 2].map(|c| (lit[c] as f32 * [0.8, 0.95, 0.75][c]) as u8),
+                hanging: false,
+            });
+        }
+    }
 }
 
 fn canopy_clear(x: f32, z: f32, samples: &[Vec3]) -> bool {
@@ -706,14 +1116,17 @@ fn canopy_clear(x: f32, z: f32, samples: &[Vec3]) -> bool {
     let stairs = x.abs() < 14.0 && z > -6.0 && z < 30.0;
     let height = canopy_height(x, z);
     temple < 26.0
+        || secrets::near_ruin(x, z, 0.0)
         || pool_distance(x, z) < 1.7
         || stairs
-        || samples
-            .iter()
-            .any(|point| (point[0] - x).hypot(point[2] - z) < 12.0 && point[1] < height + 4.0)
+        || samples.iter().any(|point| {
+            point[1] > floor_height(point[0], point[2]) - 1.0
+                && (point[0] - x).hypot(point[2] - z) < 12.0
+                && point[1] < height + 4.0
+        })
 }
 
-fn canopy_height(x: f32, z: f32) -> f32 {
+pub fn canopy_height(x: f32, z: f32) -> f32 {
     floor_height(x, z).max(0.0) + CANOPY_HEIGHT + (value_noise(x / 11.0, z / 11.0, 61) - 0.5) * 4.0
 }
 
@@ -774,7 +1187,9 @@ fn treeline(builder: &mut Builder, art: &Art, samples: &[Vec3]) {
                 ((0.0, -CANOPY_CELL), (x0, z0), (x1, z0)),
             ];
             for ((dx, dz), a, b) in edges {
-                if !clear(cx + dx, cz + dz) {
+                if !clear(cx + dx, cz + dz)
+                    || ruins::tunnel_gap((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5)
+                {
                     continue;
                 }
                 let top = |p: (f32, f32)| canopy_height(p.0, p.1) - 0.6;
@@ -860,16 +1275,16 @@ fn props(art: &Art, samples: &[Vec3], lighting: &Lighting) -> Vec<Billboard> {
 
     let mut trunks: Vec<(f32, f32)> = GIANT_TREES.to_vec();
     for _ in 0..5000 {
-        if trunks.len() >= 180 {
+        if trunks.len() >= 320 {
             break;
         }
-        let plateau = rng.chance(0.22);
+        let plateau = rng.chance(0.3);
         let x = if plateau {
-            rng.range(-96.0, -45.0)
+            rng.range(-146.0, -45.0)
         } else {
-            rng.range(-38.0, 96.0)
+            rng.range(-38.0, 146.0)
         };
-        let z = rng.range(-68.0, 108.0);
+        let z = rng.range(-126.0, 154.0);
         let height = rng.range(13.0, 22.0);
         let image = art.trees[rng.below(art.trees.len() as u32) as usize];
         let width = height * image.width as f32 / image.height as f32;
@@ -879,6 +1294,9 @@ fn props(art: &Art, samples: &[Vec3], lighting: &Lighting) -> Vec<Billboard> {
             ground_height(x, z)
         } - 0.4;
         if (!plateau && !open_ground(x, z, 6.0))
+            || secrets::near_ruin(x, z, 2.0)
+            || grotto::near(x, z, 3.0)
+            || ruins::near(x, z, 3.0)
             || trunks.iter().any(|&(tx, tz)| (tx - x).hypot(tz - z) < 5.0)
             || !clear(x, z, base, base + height, width * 0.5)
         {
@@ -936,7 +1354,10 @@ fn props(art: &Art, samples: &[Vec3], lighting: &Lighting) -> Vec<Billboard> {
         };
         let height = width * 0.75;
         let base = ground_height(x, z) - 0.15;
-        if !open_ground(x, z, 0.6) || !clear(x, z, base, base + height, width * 0.5) {
+        if !open_ground(x, z, 0.6)
+            || ruins::near(x, z, 0.3)
+            || !clear(x, z, base, base + height, width * 0.5)
+        {
             continue;
         }
         let image = if fern {

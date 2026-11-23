@@ -48,9 +48,7 @@ pub fn ground_height(x: f32, z: f32) -> f32 {
 
 pub fn plateau_height(x: f32, z: f32) -> f32 {
     let inland = smoothstep(CLIFF_X, CLIFF_X - 8.0, x);
-    let river = 1.0 - smoothstep(2.0, 4.0, (z - FALLS_Z).abs());
-    let height = CLIFF_TOP + (value_noise(x / 7.0, z / 7.0, 13) - 0.3) * 2.5 * inland;
-    lerp(height, CLIFF_TOP - 0.4, river)
+    CLIFF_TOP + (value_noise(x / 7.0, z / 7.0, 13) - 0.3) * 2.5 * inland + crate::grotto::hill(x, z)
 }
 
 pub fn cliff_x(z: f32, y: f32) -> f32 {
