@@ -1086,7 +1086,7 @@ impl Track {
     fn generate_turn(&mut self, start: usize, heading: f32, deviation: f32) {
         let severity = self
             .rng
-            .pick_weighted(&[4.0, 6.0, 13.0, 20.0, 22.0, 20.0, 15.0]) as u8;
+            .pick_weighted(&[10.0, 8.0, 13.0, 20.0, 22.0, 20.0, 15.0]) as u8;
         let direction = if deviation.abs() > 1.1 {
             if deviation > 0.0 {
                 Direction::Left

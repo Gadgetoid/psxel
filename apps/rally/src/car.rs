@@ -22,6 +22,22 @@ const WALL_SCRUB: f32 = 0.3;
 const WALL_GLANCE: f32 = 0.12;
 const MAX_CLIMB: f32 = 8.0;
 const ICE_GRIP: f32 = 0.35;
+const HANDBRAKE_BRAKING: f32 = 2.5;
+const HANDBRAKE_REAR_GRIP: f32 = 0.2;
+const HANDBRAKE_LIMIT: f32 = 1.8;
+const HANDBRAKE_SWING: f32 = 1.6;
+const HANDBRAKE_RESPONSE: f32 = 6.0;
+const DRIFT_SLIDE: f32 = 2.0;
+const DRIFT_ANGLE: f32 = 0.7;
+const POWER_DRIFT_SLIP: f32 = 0.3;
+const POWER_SLIDE_GRIP: f32 = 0.5;
+const POWER_SLIDE_THROTTLE: f32 = 0.2;
+const OVERSTEER: f32 = 2.0;
+const RECOVERY_PUSH: f32 = 0.35;
+const SPIN_ANGLE: f32 = 1.2;
+const DRIFT_RESPONSE: f32 = 5.0;
+const DRIFT_CARRY: f32 = 0.6;
+const DRIFT_RELEASE_SLIP: f32 = 0.1;
 const CRAWL_SPEED: f32 = 5.0;
 const CRAWL_DRAG_SHARE: f32 = 0.5;
 const MAX_ROLL: f32 = 0.35;
@@ -78,6 +94,7 @@ pub struct Car {
     flick: f32,
     last_throttle: f32,
     pub water_depth: f32,
+    drifting: bool,
     pub wet: bool,
 }
 
@@ -111,6 +128,7 @@ impl Car {
             flick: 0.0,
             last_throttle: 0.0,
             water_depth: 0.0,
+            drifting: false,
             wet: false,
         }
     }
@@ -328,7 +346,7 @@ impl Car {
                 }
             }
             if controls.handbrake {
-                forward_speed -= forward_speed.signum() * 3.5 * DT;
+                forward_speed -= forward_speed.signum() * HANDBRAKE_BRAKING * DT;
             }
             forward_speed -= forward_speed * forward_speed.abs() * 0.0016 * DT;
             forward_speed -=
@@ -345,7 +363,9 @@ impl Car {
             }
             self.flick = (self.flick - DT).max(0.0);
             let rear_grip = if controls.handbrake {
-                grip * 0.12
+                grip * HANDBRAKE_REAR_GRIP
+            } else if power_slide && self.drifting {
+                grip * (POWER_SLIDE_GRIP - POWER_SLIDE_THROTTLE * controls.throttle)
             } else if power_slide {
                 grip * 0.42
             } else if self.flick > 0.0 {
@@ -358,7 +378,11 @@ impl Car {
             events.sliding =
                 lateral_speed.abs() + (1.0 - traction) * controls.throttle.max(0.0) * 4.0;
             self.slide = lateral_speed.abs();
-            lateral_speed -= lateral_speed * lateral_decay;
+            let scrubbed = lateral_speed * lateral_decay;
+            lateral_speed -= scrubbed;
+            if power_slide && self.drifting && forward_speed > 0.0 {
+                forward_speed += scrubbed.abs() * DRIFT_CARRY;
+            }
 
             let speed_factor = (forward_speed.abs() / 8.0).min(1.0);
             let steer_angle =
@@ -372,16 +396,39 @@ impl Car {
                 drifting && self.steer.signum() != self.yaw_rate.signum() && self.steer.abs() > 0.1;
             let mut yaw_response =
                 ((3.0 + turn_grip * 6.0 + if countering { 5.0 } else { 0.0 }) * DT).min(1.0);
+            if controls.handbrake || self.flick > 0.0 {
+                self.drifting = true;
+            }
+            if slip < DRIFT_RELEASE_SLIP || forward_speed < 6.0 {
+                self.drifting = false;
+            }
+            let power_drift = !controls.handbrake
+                && self.drifting
+                && slip > POWER_DRIFT_SLIP
+                && controls.throttle > 0.3
+                && forward_speed > 6.0;
+            if power_drift {
+                let away = -lateral_speed.signum();
+                let recovering = self.yaw_rate * away < 0.0;
+                let push = OVERSTEER
+                    * if recovering { RECOVERY_PUSH } else { 1.0 }
+                    * controls.throttle
+                    * (slip / DRIFT_ANGLE).min(1.0)
+                    * (1.0 - (slip - SPIN_ANGLE).max(0.0));
+                let limit = grip_limit * HANDBRAKE_LIMIT;
+                target_yaw = geometric_yaw.clamp(-limit, limit) + away * push.max(0.0);
+                yaw_response = (DRIFT_RESPONSE * DT).min(1.0);
+            }
             if controls.handbrake && forward_speed.abs() > 4.0 {
-                let direction = if self.steer.abs() > 0.05 {
-                    self.steer.signum()
-                } else {
-                    self.yaw_rate.signum()
-                };
-                let amount = self.steer.abs().max(0.6);
-                target_yaw =
-                    direction * amount * 2.9 * forward_speed.signum() + self.yaw_rate * 0.3;
-                yaw_response = (8.0 * DT).min(1.0);
+                let limit = grip_limit * HANDBRAKE_LIMIT;
+                let settle = (1.0 - slip / DRIFT_ANGLE).max(0.0);
+                let swing = self.steer
+                    * HANDBRAKE_SWING
+                    * settle
+                    * (forward_speed.abs() / 12.0).min(1.0)
+                    * forward_speed.signum();
+                target_yaw = (geometric_yaw + swing).clamp(-limit, limit);
+                yaw_response = (HANDBRAKE_RESPONSE * DT).min(1.0);
             }
             self.yaw_rate += (target_yaw - self.yaw_rate) * yaw_response;
         } else {
@@ -390,6 +437,8 @@ impl Car {
 
         let carry = if self.airborne {
             1.0
+        } else if controls.handbrake || self.slide > DRIFT_SLIDE {
+            0.985 + 0.015 * grip
         } else {
             0.92 + 0.08 * grip
         };
@@ -1754,7 +1803,7 @@ mod tests {
                     let course = -(course_end - course_start) / 0.5;
                     if handbrake {
                         assert!(
-                            yaw > 1.2 && course < yaw * 0.5,
+                            yaw > 1.0 && course < yaw * 0.5,
                             "{label} {speed}: handbrake yaw {yaw} course {course}"
                         );
                     } else {
