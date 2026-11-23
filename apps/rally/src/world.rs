@@ -22,6 +22,12 @@ const PRECIPITATION_DROPS: usize = 240;
 const PRECIPITATION_RADIUS: f32 = 24.0;
 const GROUND_BIAS: i32 = 160;
 const WATER_BIAS: i32 = -250;
+const KERB: f32 = 0.6;
+const PARAPET: f32 = 0.9;
+const FASCIA: f32 = 1.1;
+const PIER_SPACING: usize = 4;
+const PIER_HALF: f32 = 0.45;
+const CONCRETE: Rgb = [150, 146, 138];
 const STREAM_BIAS: i32 = 60;
 const WATER_DRAW_RANGE: f32 = 260.0;
 const ROAD_BIAS: i32 = -180;
@@ -200,6 +206,7 @@ impl World {
         self.draw_ground(
             renderer, vram, atlas, art, track, from_index, window, lighting,
         );
+        self.draw_bridges(renderer, track, window, lighting);
         self.draw_water(renderer, track, camera, window, lighting);
         self.draw_props(renderer, atlas, art, track, camera, window, lighting);
         let boulder =
@@ -209,6 +216,113 @@ impl World {
         self.landscape
             .draw_props(renderer, art, atlas, track, camera, lighting, &boulder);
         self.draw_particles(renderer, atlas, camera, lighting);
+    }
+
+    fn draw_bridges(
+        &self,
+        renderer: &mut Renderer,
+        track: &Track,
+        window: (usize, usize),
+        lighting: Lighting,
+    ) {
+        let (start, end) = window;
+        let lit = |shade: f32| {
+            [0, 1, 2].map(|c| {
+                let light = (lighting.ambient[c] as f32 + lighting.sun[c] as f32 * shade) / 255.0;
+                (CONCRETE[c] as f32 * light).clamp(0.0, 255.0) as u8
+            })
+        };
+        for index in start..end {
+            if !track.is_deck(index) {
+                continue;
+            }
+            let (a, b) = (track.sample(index), track.sample(index + 1));
+            let origin = world_to_psx(a.x, a.y, a.z);
+            renderer.set_object(origin, Mat3Fx12::IDENTITY);
+            let local = |x: f32, y: f32, z: f32| {
+                let position = world_to_psx(x, y, z);
+                Vec3i16::new(
+                    (position.x - origin.x) as i16,
+                    (position.y - origin.y) as i16,
+                    (position.z - origin.z) as i16,
+                )
+            };
+            let edge = |sample: &crate::track::Sample, sample_index: usize, side: f32| {
+                let lateral = (track.half_width(sample_index) + KERB) * side;
+                let (rx, rz) = sample.right();
+                let y = sample.y
+                    + track.side_height(sample_index, track.half_width(sample_index) * side);
+                (sample.x + rx * lateral, y, sample.z + rz * lateral)
+            };
+            for side in [-1.0f32, 1.0] {
+                let (ax, ay, az) = edge(&a, index, side);
+                let (bx, by, bz) = edge(&b, index + 1, side);
+                for (top, bottom, shade) in [(PARAPET, 0.0, 0.9), (0.0, -FASCIA, 0.6)] {
+                    let color = lit(shade);
+                    let points = [
+                        Point::new(local(ax, ay + top, az), color, (0, 0)),
+                        Point::new(local(bx, by + top, bz), color, (0, 0)),
+                        Point::new(local(ax, ay + bottom, az), color, (0, 0)),
+                        Point::new(local(bx, by + bottom, bz), color, (0, 0)),
+                    ];
+                    renderer.polygon(&points, Surface::gouraud(), ROAD_BIAS + 20, 0);
+                }
+            }
+            let under = lit(0.25);
+            let ((lax, lay, laz), (rax, ray, raz)) = (edge(&a, index, -1.0), edge(&a, index, 1.0));
+            let ((lbx, lby, lbz), (rbx, rby, rbz)) =
+                (edge(&b, index + 1, -1.0), edge(&b, index + 1, 1.0));
+            let points = [
+                Point::new(local(lax, lay - FASCIA, laz), under, (0, 0)),
+                Point::new(local(rax, ray - FASCIA, raz), under, (0, 0)),
+                Point::new(local(lbx, lby - FASCIA, lbz), under, (0, 0)),
+                Point::new(local(rbx, rby - FASCIA, rbz), under, (0, 0)),
+            ];
+            renderer.polygon(&points, Surface::gouraud(), 0, 0);
+            if !index.is_multiple_of(PIER_SPACING) {
+                continue;
+            }
+            let (fx, fz) = a.forward();
+            let (rx, rz) = a.right();
+            let top = a.y - FASCIA;
+            for side in [-0.5f32, 0.5] {
+                let lateral = track.half_width(index) * side;
+                let (cx, cz) = (a.x + rx * lateral, a.z + rz * lateral);
+                let foot = self.landscape.height_at(track, cx, cz) - 0.3;
+                if foot >= top {
+                    continue;
+                }
+                let corner = |along: f32, across: f32, y: f32| {
+                    local(
+                        cx + fx * along + rx * across,
+                        y,
+                        cz + fz * along + rz * across,
+                    )
+                };
+                let faces = [
+                    ((-1.0, -1.0), (-1.0, 1.0), 0.5),
+                    ((-1.0, 1.0), (1.0, 1.0), 0.8),
+                    ((1.0, 1.0), (1.0, -1.0), 0.5),
+                    ((1.0, -1.0), (-1.0, -1.0), 0.8),
+                ];
+                for ((a0, c0), (a1, c1), shade) in faces {
+                    let color = lit(shade);
+                    let (a0, c0, a1, c1) = (
+                        a0 * PIER_HALF,
+                        c0 * PIER_HALF,
+                        a1 * PIER_HALF,
+                        c1 * PIER_HALF,
+                    );
+                    let points = [
+                        Point::new(corner(a0, c0, top), color, (0, 0)),
+                        Point::new(corner(a1, c1, top), color, (0, 0)),
+                        Point::new(corner(a0, c0, foot), color, (0, 0)),
+                        Point::new(corner(a1, c1, foot), color, (0, 0)),
+                    ];
+                    renderer.polygon(&points, Surface::gouraud(), 0, 0);
+                }
+            }
+        }
     }
 
     fn draw_water(
@@ -491,7 +605,12 @@ impl World {
                 let sample = track.sample(index);
                 let (rx, rz) = sample.right();
                 let half = track.half_width(index);
-                let outer = [track.shoulder(index)];
+                let deck = track.is_deck(index);
+                let outer = [if deck {
+                    half + KERB
+                } else {
+                    track.shoulder(index)
+                }];
                 let mut offsets: Vec<f32> = outer.iter().rev().map(|offset| -offset).collect();
                 offsets.push(-half);
                 offsets.push(half);
@@ -503,7 +622,9 @@ impl World {
                     let lateral = track.drawn_lateral(index, offset);
                     let x = sample.x + rx * lateral;
                     let z = sample.z + rz * lateral;
-                    let height = if offset.abs() > half + 0.01 {
+                    let height = if deck && offset.abs() > half + 0.01 {
+                        track.side_height(index, half * lateral.signum())
+                    } else if offset.abs() > half + 0.01 {
                         self.landscape.height_at(track, x, z) - sample.y + 0.05
                     } else {
                         track.side_height(index, lateral)
@@ -673,6 +794,9 @@ impl World {
         };
 
         for index in start..end {
+            if track.is_deck(index) {
+                continue;
+            }
             let sample = track.sample(index);
             let distance = Track::distance(index);
             let (a, b, t) = track.biomes.at(distance);

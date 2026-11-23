@@ -215,8 +215,8 @@ impl Rally {
         let look = (8.0 + speed.max(0.0) * 0.5) / track::SAMPLE;
         let anchor = self
             .track
-            .terrain(car.x, car.z)
-            .road
+            .surface(car.x, car.z, car.y)
+            .1
             .map(|road| road.index)
             .unwrap_or(car.index);
         let target = self.track.sample(anchor + look as usize + 1);
@@ -1197,7 +1197,7 @@ fn draw_shadow(renderer: &mut Renderer, car: &Car, world: &World, track: &Track,
             world
                 .landscape
                 .height_at(track, x, z)
-                .max(track.terrain(x, z).height)
+                .max(track.surface(x, z, car.y).0)
                 + 0.06,
             z,
         )

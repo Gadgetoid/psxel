@@ -348,6 +348,9 @@ impl Landscape {
                         continue;
                     }
                 }
+                if track.deck_at(x, z).is_some() {
+                    continue;
+                }
                 if vertex.road_index == u32::MAX {
                     continue;
                 }

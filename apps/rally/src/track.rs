@@ -37,6 +37,7 @@ pub enum NoteKind {
     Crest,
     Jump,
     Ford,
+    Bridge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +97,7 @@ impl PaceNote {
             NoteKind::Crest => words.push("OVER CREST".into()),
             NoteKind::Jump => words.push("JUMP!".into()),
             NoteKind::Ford => words.push("WATER SPLASH".into()),
+            NoteKind::Bridge => words.push("OVER BRIDGE".into()),
         }
         words.join(" ")
     }
@@ -110,6 +112,7 @@ pub struct Sample {
     pub curvature: f32,
     pub clearance: [f32; 2],
     pub fold: [f32; 2],
+    pub deck: bool,
 }
 
 impl Sample {
@@ -183,6 +186,26 @@ pub struct Puddle {
     pub radius: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Crossing {
+    pub old: usize,
+    pub center: f32,
+    pub end: f32,
+    pub old_upper: bool,
+}
+
+pub struct DeckHit {
+    pub height: f32,
+    pub road: RoadPoint,
+}
+
+const BRIDGE_CLEARANCE: f32 = 7.5;
+const BRIDGE_RAMP: f32 = 42.0;
+const DECK_REACH: f32 = 18.0;
+const DECK_RISE: f32 = 3.0;
+const DECK_STEP_UP: f32 = 1.2;
+const CROSSING_ARC: usize = 40;
+
 const FORD_DEPTH: f32 = 1.2;
 const FORD_WIDTH: f32 = 8.0;
 const FORD_WATER: f32 = 0.35;
@@ -200,6 +223,7 @@ pub struct Track {
     rng: Rng,
     bumps: Vec<Bump>,
     pub fords: Vec<Ford>,
+    pub crossings: Vec<Crossing>,
     general_heading: f32,
     curvature: f32,
     phases: [f32; 3],
@@ -216,7 +240,7 @@ const SECTION_LENGTH: f32 = 260.0;
 const MAX_DEVIATION: f32 = 1.9;
 const GENERAL_DRIFT: f32 = 0.7;
 const PREVIEW_MARGIN: usize = 10;
-const PREVIEW_IGNORE: usize = 30;
+const LOOP_RATIO: f32 = 0.3;
 const PREVIEW_CLEARANCE: f32 = 35.0;
 const SECTION_FADE: f32 = 45.0;
 
@@ -281,6 +305,7 @@ impl Track {
             rng,
             bumps: Vec::new(),
             fords: Vec::new(),
+            crossings: Vec::new(),
             general_heading: 0.0,
             curvature: 0.0,
             phases,
@@ -329,8 +354,11 @@ impl Track {
                 curvature: self.curvature,
                 clearance: [MAX_TERRAIN; 2],
                 fold: [MAX_TERRAIN; 2],
+                deck: false,
             };
             sample.y = self.elevation(Self::distance(index));
+            self.detect_crossing(index, &mut sample);
+            sample.deck = self.over_crossing(&sample, Self::distance(index));
             self.samples.push(sample);
             self.clamp_inside_of_bend(index);
             self.clamp_after_bend(index);
@@ -417,11 +445,173 @@ impl Track {
         self.grid.entry((cx, cz)).or_default().push(index as u32);
     }
 
-    fn preview_clear(&self, count: usize, target_curvature: f32) -> bool {
-        self.preview_gap(count, target_curvature) >= PREVIEW_CLEARANCE
+    fn detect_crossing(&mut self, index: usize, sample: &mut Sample) {
+        let (cx, cz) = Self::cell(sample.x, sample.z);
+        let mut best: Option<(f32, usize)> = None;
+        for gx in cx - 1..=cx + 1 {
+            for gz in cz - 1..=cz + 1 {
+                for &entry in self.grid.get(&(gx, gz)).into_iter().flatten() {
+                    let old = entry as usize;
+                    if old + CROSSING_ARC > index {
+                        continue;
+                    }
+                    let other = self.samples[old];
+                    let distance = (other.x - sample.x).hypot(other.z - sample.z);
+                    if distance < DECK_REACH && best.is_none_or(|(near, _)| distance < near) {
+                        best = Some((distance, old));
+                    }
+                }
+            }
+        }
+        let Some((distance, old)) = best else {
+            return;
+        };
+        let old_height = self.samples[old].y;
+        let existing = self
+            .crossings
+            .iter_mut()
+            .find(|crossing| crossing.old.abs_diff(old) < 24)
+            .map(|crossing| {
+                crossing.old = old;
+                crossing.end = Self::distance(index);
+                *crossing
+            });
+        let old_upper = match existing {
+            Some(crossing) => crossing.old_upper,
+            None => old_height - sample.y >= BRIDGE_CLEARANCE,
+        };
+        let center = Self::distance(index) + distance * 0.5;
+        if existing.is_none() {
+            self.crossings.push(Crossing {
+                old,
+                center,
+                end: center,
+                old_upper,
+            });
+            if !old_upper {
+                let note = PaceNote {
+                    start: index,
+                    end: index + (distance / SAMPLE) as usize,
+                    kind: NoteKind::Bridge,
+                    long: false,
+                    tightens: false,
+                    into: false,
+                };
+                let position = self
+                    .notes
+                    .partition_point(|existing| existing.end <= note.end);
+                self.notes.insert(position, note);
+            }
+        }
+        let target = if old_upper {
+            old_height - BRIDGE_CLEARANCE
+        } else {
+            old_height + BRIDGE_CLEARANCE
+        };
+        let short = if old_upper {
+            sample.y - target
+        } else {
+            target - sample.y
+        };
+        if short > 0.3 {
+            self.bumps.push(Bump {
+                center,
+                height: target - self.elevation(center),
+                width: BRIDGE_RAMP,
+            });
+            let reach = (BRIDGE_RAMP * 2.5 / SAMPLE) as usize;
+            for earlier in index.saturating_sub(reach)..index {
+                self.samples[earlier].y = self.elevation(Self::distance(earlier));
+            }
+            sample.y = self.elevation(Self::distance(index));
+        }
+        let reach = (BRIDGE_RAMP * 1.5 / SAMPLE) as usize;
+        for earlier in index.saturating_sub(reach)..index {
+            let previous = self.samples[earlier];
+            let deck = self.over_crossing(&previous, Self::distance(earlier));
+            self.samples[earlier].deck = deck;
+        }
     }
 
-    fn preview_gap(&self, count: usize, target_curvature: f32) -> f32 {
+    fn over_crossing(&mut self, sample: &Sample, distance: f32) -> bool {
+        let mut deck = false;
+        for crossing in self.crossings.clone() {
+            if distance < crossing.center - BRIDGE_RAMP * 1.5
+                || distance > crossing.end + BRIDGE_RAMP * 1.5
+            {
+                continue;
+            }
+            let low = crossing.old.saturating_sub(12);
+            let high = (crossing.old + 12).min(self.samples.len() - 1);
+            for old in &mut self.samples[low..=high] {
+                if (old.x - sample.x).hypot(old.z - sample.z) >= DECK_REACH {
+                    continue;
+                }
+                if sample.y - old.y > DECK_RISE {
+                    deck = true;
+                } else if old.y - sample.y > DECK_RISE {
+                    old.deck = true;
+                }
+            }
+        }
+        deck
+    }
+
+    pub fn deck_at(&self, x: f32, z: f32) -> Option<DeckHit> {
+        for crossing in &self.crossings {
+            let new_low = (crossing.center / SAMPLE) as usize;
+            let new_high = (crossing.end / SAMPLE) as usize;
+            let spans = [
+                (new_low.saturating_sub(16), new_high + 16),
+                (crossing.old.saturating_sub(40), crossing.old + 16),
+            ];
+            for (low, high) in spans {
+                let high = high.min(self.samples.len().saturating_sub(2));
+                let near = (low..high).step_by(8).any(|index| {
+                    let anchor = self.samples[index];
+                    (anchor.x - x).hypot(anchor.z - z) < SAMPLE * 8.0 + DECK_REACH
+                });
+                if !near {
+                    continue;
+                }
+                for index in low..high {
+                    let point = self.project(index, x, z);
+                    if !self.is_deck(point.index)
+                        || point.overshoot > 0.01
+                        || point.lateral.abs() > self.half_width(point.index) + 0.4
+                    {
+                        continue;
+                    }
+                    return Some(DeckHit {
+                        height: self.ground(point.index, point.t, point.lateral),
+                        road: point,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    pub fn is_deck(&self, index: usize) -> bool {
+        let next = (index + 1).min(self.samples.len() - 1);
+        self.samples[index].deck || self.samples[next].deck
+    }
+
+    pub fn surface(&self, x: f32, z: f32, y: f32) -> (f32, Option<RoadPoint>) {
+        let terrain = self.terrain(x, z);
+        match self.deck_at(x, z) {
+            Some(deck) if deck.height < y + DECK_STEP_UP && deck.height > terrain.height => {
+                (deck.height, Some(deck.road))
+            }
+            _ => (terrain.height, terrain.road),
+        }
+    }
+
+    fn preview_clear(&self, count: usize, target_curvature: f32) -> bool {
+        self.preview_gap(count, target_curvature, usize::MAX) >= PREVIEW_CLEARANCE
+    }
+
+    fn preview_gap(&self, count: usize, target_curvature: f32, arc_limit: usize) -> f32 {
         let mut gap = f32::MAX;
         let Some(last) = self.samples.last().copied() else {
             return gap;
@@ -429,7 +619,16 @@ impl Track {
         let newest = self.samples.len();
         let (mut x, mut z, mut heading, mut curvature) =
             (last.x, last.z, last.heading, self.curvature);
-        for _ in 0..count + PREVIEW_MARGIN {
+        let mut preview: Vec<(f32, f32)> = Vec::with_capacity(count + PREVIEW_MARGIN);
+        let scaled = |distance: f32, arc_samples: usize| {
+            let required = arc_samples as f32 * SAMPLE * LOOP_RATIO;
+            if required < PREVIEW_CLEARANCE {
+                distance * PREVIEW_CLEARANCE / required.max(1e-3)
+            } else {
+                distance
+            }
+        };
+        for step in 0..count + PREVIEW_MARGIN {
             curvature += (target_curvature - curvature).clamp(-0.018, 0.018);
             let next = heading + curvature * SAMPLE;
             let middle = (heading + next) * 0.5;
@@ -442,15 +641,20 @@ impl Track {
                     if let Some(entries) = self.grid.get(&(gx, gz)) {
                         for &entry in entries {
                             let index = entry as usize;
-                            if index + PREVIEW_IGNORE >= newest {
+                            if newest + step - index > arc_limit {
                                 continue;
                             }
                             let other = self.samples[index];
-                            gap = gap.min(((other.x - x).powi(2) + (other.z - z).powi(2)).sqrt());
+                            let distance = (other.x - x).hypot(other.z - z);
+                            gap = gap.min(scaled(distance, newest + step - index));
                         }
                     }
                 }
             }
+            for (earlier, &(px, pz)) in preview.iter().enumerate() {
+                gap = gap.min(scaled((px - x).hypot(pz - z), step - earlier));
+            }
+            preview.push((x, z));
         }
         gap
     }
@@ -510,10 +714,18 @@ impl Track {
             let candidate_radius = severity_radius(candidate_severity);
             let length = ((candidate_angle * candidate_radius / SAMPLE).round() as usize).max(3);
             let final_heading = heading + candidate.sign() * candidate_angle;
-            let gap = self.preview_gap(length, candidate.sign() / candidate_radius);
+            let gap = self.preview_gap(length, candidate.sign() / candidate_radius, usize::MAX);
             let aligned = (final_heading - self.general_heading).abs() < MAX_DEVIATION;
             (gap, aligned)
         };
+        let loop_gap =
+            |&(candidate, candidate_angle, candidate_severity): &(Direction, f32, u8)| {
+                let candidate_radius = severity_radius(candidate_severity);
+                let length =
+                    ((candidate_angle * candidate_radius / SAMPLE).round() as usize).max(3);
+                self.preview_gap(length, candidate.sign() / candidate_radius, CROSSING_ARC)
+                    .min(PREVIEW_CLEARANCE)
+            };
         let chosen = candidates
             .iter()
             .find(|candidate| {
@@ -521,9 +733,11 @@ impl Track {
                 aligned && gap >= PREVIEW_CLEARANCE
             })
             .or_else(|| {
-                candidates
-                    .iter()
-                    .max_by(|a, b| assess(a).0.total_cmp(&assess(b).0))
+                candidates.iter().max_by(|a, b| {
+                    (loop_gap(a), assess(a).0)
+                        .partial_cmp(&(loop_gap(b), assess(b).0))
+                        .unwrap()
+                })
             })
             .copied()
             .unwrap();
@@ -891,6 +1105,9 @@ impl Track {
                             continue;
                         }
                         let point = self.project(index, x, z);
+                        if self.is_deck(point.index) {
+                            continue;
+                        }
                         if !points.iter().any(|existing| existing.index == point.index) {
                             points.push(point);
                         }
@@ -1284,19 +1501,37 @@ mod tests {
     }
 
     #[test]
-    fn stages_never_cross_themselves() {
+    fn stages_only_cross_on_bridges() {
         for seed in 0..12u64 {
             let mut track = Track::new(seed);
             track.ensure(4000);
             let samples = &track.samples;
+            let near_deck = |index: usize| {
+                (index.saturating_sub(8)..(index + 8).min(samples.len()))
+                    .any(|near| samples[near].deck)
+            };
             for (index, sample) in samples.iter().enumerate().step_by(3) {
-                for other in samples.iter().take(index.saturating_sub(40)).step_by(2) {
-                    let distance =
-                        ((other.x - sample.x).powi(2) + (other.z - sample.z).powi(2)).sqrt();
+                for (other_index, other) in samples
+                    .iter()
+                    .enumerate()
+                    .take(index.saturating_sub(40))
+                    .step_by(2)
+                {
+                    let distance = (other.x - sample.x).hypot(other.z - sample.z);
+                    if distance > 20.0 {
+                        continue;
+                    }
+                    let rise = sample.y - other.y;
+                    let bridged = (rise.abs() > DECK_RISE || distance > 12.0)
+                        && (near_deck(index) || near_deck(other_index));
                     assert!(
-                        distance > 20.0,
-                        "seed {seed}: sample {index} within {distance:.1} m of earlier road"
+                        bridged,
+                        "seed {seed}: sample {index} within {distance:.1} m of {other_index}, rise {rise:.1}"
                     );
+                    if distance < 10.0 {
+                        let upper = if rise > 0.0 { sample } else { other };
+                        assert!(upper.deck, "seed {seed}: crossing at {index} has no deck");
+                    }
                 }
             }
         }

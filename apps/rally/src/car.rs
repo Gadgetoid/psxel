@@ -147,7 +147,7 @@ impl Car {
         let mut events = Events::default();
         track.ensure(self.index + 120);
         let (index, along, _) = track.locate(self.x, self.z, self.index);
-        let surface_road = track.terrain(self.x, self.z).road;
+        let surface_road = track.surface(self.x, self.z, self.y).1;
         let (road_index, lateral) = surface_road
             .map(|road| (road.index, road.lateral))
             .unwrap_or((index, f32::MAX));
@@ -311,11 +311,12 @@ impl Car {
         let (rx, rz) = self.right();
         let wheel = |forward: f32, side: f32| {
             track
-                .terrain(
+                .surface(
                     self.x + fx * forward + rx * side,
                     self.z + fz * forward + rz * side,
+                    self.y,
                 )
-                .height
+                .0
         };
         let (front_left, front_right) = (
             wheel(WHEEL_OFFSET_FORWARD, -WHEEL_OFFSET_SIDE),
