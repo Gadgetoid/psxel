@@ -48,6 +48,8 @@ const CRAWL_DRAG_SHARE: f32 = 0.5;
 const MAX_ROLL: f32 = 0.35;
 const WHEEL_OFFSET_FORWARD: f32 = 1.2;
 const WHEEL_OFFSET_SIDE: f32 = 0.8;
+const MARK_SPEED: f32 = 2.0;
+const MARK_SLIDE: f32 = 3.0;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Controls {
@@ -596,6 +598,24 @@ impl Car {
         Mat3Fx12::rotation_y(angle(self.heading))
             * Mat3Fx12::rotation_x(angle(self.slope_pitch))
             * Mat3Fx12::rotation_z(angle(self.slope_roll))
+    }
+
+    pub fn rear_wheels(&self) -> [(f32, f32); 2] {
+        let (fx, fz) = self.forward();
+        let (rx, rz) = self.right();
+        [-1.0, 1.0].map(|side| {
+            (
+                self.x - fx * WHEEL_OFFSET_FORWARD + rx * side * WHEEL_OFFSET_SIDE,
+                self.z - fz * WHEEL_OFFSET_FORWARD + rz * side * WHEEL_OFFSET_SIDE,
+            )
+        })
+    }
+
+    pub fn marking(&self, handbrake: bool) -> bool {
+        let speed = self.speed().abs();
+        !self.airborne
+            && speed > MARK_SPEED
+            && (self.slide > MARK_SLIDE || self.drifting || handbrake)
     }
 
     pub fn wheel_origin(&self) -> Vec3i32 {
@@ -1524,6 +1544,19 @@ impl CarMesh {
                 (car.rotation(), car.origin())
             }
         };
+        let (steer_sin, steer_cos) = (car.steer * MAX_STEER).sin_cos();
+        let steered = |p: Vec3i16| {
+            if p.z <= 0 {
+                return p;
+            }
+            let pivot_x = (TYRE_OUTER + TYRE_INNER) * 0.5 * (p.x as f32).signum();
+            let (dx, dz) = (p.x as f32 - pivot_x, p.z as f32 - WHEEL_Z);
+            Vec3i16::new(
+                (pivot_x + dx * steer_cos + dz * steer_sin) as i16,
+                p.y,
+                (WHEEL_Z - dx * steer_sin + dz * steer_cos) as i16,
+            )
+        };
         let mut queue: Vec<Queued> = Vec::new();
         for wheel_pass in [false, true] {
             let (rotation, origin) = placement(wheel_pass);
@@ -1537,7 +1570,10 @@ impl CarMesh {
                     .points
                     .iter()
                     .zip(&face.uvs)
-                    .map(|(&p, &uv)| Point::new(p, lit, uv))
+                    .map(|(&p, &uv)| {
+                        let p = if wheel_pass { steered(p) } else { p };
+                        Point::new(p, lit, uv)
+                    })
                     .collect();
                 let surface = match face.texture {
                     Some(texture) => Surface::textured(texture),
@@ -1579,7 +1615,7 @@ impl CarMesh {
             let points: Vec<Point> = order
                 .iter()
                 .zip(uvs)
-                .map(|(&(dy, dz), uv)| Point::new(corner(dy, dz), lit, uv))
+                .map(|(&(dy, dz), uv)| Point::new(steered(corner(dy, dz)), lit, uv))
                 .collect();
             queue.extend(Queued::new(
                 renderer,

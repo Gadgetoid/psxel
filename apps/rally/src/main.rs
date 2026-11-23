@@ -8,6 +8,7 @@ mod font;
 mod hud;
 mod landscape;
 mod livery;
+mod marks;
 mod render;
 mod rng;
 mod signs;
@@ -77,6 +78,7 @@ struct Rally {
     renderer: Renderer,
     track: Track,
     world: World,
+    marks: marks::TyreMarks,
     car: Car,
     mesh: CarMesh,
     livery: livery::Livery,
@@ -171,6 +173,7 @@ impl Rally {
             art,
             renderer: Renderer::new(),
             world: World::new(seed),
+            marks: marks::TyreMarks::default(),
             car,
             mesh: CarMesh::build(&car_atlas),
             livery,
@@ -870,6 +873,11 @@ impl Game for Rally {
 
     fn update(&mut self, input: &Input) {
         self.frame = self.frame.wrapping_add(1);
+        self.marks.record(
+            &self.car,
+            &self.track,
+            self.car.marking(self.controls.handbrake),
+        );
         if input.just_pressed(Key::F1) {
             self.show_stats = !self.show_stats;
         }
@@ -1112,6 +1120,8 @@ impl Game for Rally {
             draw_index,
             lighting,
         );
+        self.marks
+            .draw(&mut self.renderer, &self.camera, lighting.fog);
         if let Some(beam) = lighting.headlight {
             let braking = self.controls.throttle < -0.1 || self.controls.handbrake;
             draw_lamps(
