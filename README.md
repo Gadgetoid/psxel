@@ -10,6 +10,7 @@ The GitHub Pages site builds every web target on each push to `main`:
 
 - `rally/`: PSX Rally, an endless stage with a co-driver, five biomes, day and night, weather, fords, ravines, tunnels, bridges and twelve period liveries.
 - `temple/`: a looping fly-through of a jungle temple with a waterfall, pool, a secret crystal cave behind the falls, the cave the falls pour from, with an indoor pool fed by falls from the ceiling, sunken treasure and ruins, and a passage to a jade idol ruin in a sinkhole, a blocked jungle tunnel at the end of the causeway, a torch-lit idol chamber with a flooded crypt beneath, and a shrine on top lit by braziers; a sunken treasure waits in the pool. Space pauses, C toggles a free camera (WASD, arrows, Q/E), V toggles the CRT filter and G the short draw-distance fog (both on by default), F toggles a period 20 fps frame limit, M mutes. `?crt=0`, `?fog=0` and `?fps=20` (or `--crt=0`, `--fog=0`, `--fps=20` natively) set them at start.
+- `dive/`: pilot a little yellow MiniROVER-style ROV on its tether down a reef to the wreck of the S.S. Oceanic, with depth-filtered light, caustics, kelp, fish schools a cargo hold of treasure, and something glowing at the bottom of the trench. WASD or arrows to drive, Q/E or Space/Shift to dive and climb, L for lamps, V for the CRT filter, F for 20 fps, M to mute. Gamepad and touch supported.
 - `demo/`: the presenter test card.
 
 Useful URL options for the rally: `?seed=N` picks a stage, `?at=N` starts at a track index, `?stats=1` shows frame timing and location, `?webgl` forces the WebGL backend.
@@ -34,7 +35,7 @@ cargo run --release -p temple -- --shots out  # temple tour screenshots
 - `crates/psxel_gpu`: wgpu presentation.
 - `crates/psxel_spu`: SPU-ADPCM encoding and decoding.
 - `crates/psxel_engine`: windowing, input, gamepad and Web Audio.
-- `apps/rally`: the rally game. `apps/temple`: the jungle temple fly-through. `apps/demo`: the test card.
+- `apps/rally`: the rally game. `apps/temple`: the jungle temple fly-through. `apps/dive`: the submarine wreck dive. `apps/demo`: the test card.
 - `assets`: converted sprites, textures and sounds.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more.

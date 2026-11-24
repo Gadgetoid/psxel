@@ -518,6 +518,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dive"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "psxel_engine",
+ "psxel_math",
+ "psxel_prim",
+ "psxel_soft",
+ "psxel_vram",
+]
+
+[[package]]
 name = "dlib"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,13 @@
+[package]
+name = "dive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+psxel_engine = { path = "../../crates/psxel_engine" }
+psxel_math = { path = "../../crates/psxel_math" }
+psxel_prim = { path = "../../crates/psxel_prim" }
+psxel_soft = { path = "../../crates/psxel_soft" }
+psxel_vram = { path = "../../crates/psxel_vram" }
+png = "0.18"

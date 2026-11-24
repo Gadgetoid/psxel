@@ -270,6 +270,8 @@ impl Temple {
             ],
             right: (camera.yaw.cos(), -camera.yaw.sin()),
             fog,
+            texture_fog: fog,
+            fog_bands: 0,
             near,
             far,
             interior_bias: if inside < 0.3 { 160 } else { 0 },

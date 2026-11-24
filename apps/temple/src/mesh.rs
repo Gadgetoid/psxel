@@ -170,6 +170,7 @@ impl Cell {
 #[derive(Clone, Copy, Default)]
 struct Corner {
     position: Vec3i16,
+    world: Vec3,
     uv: (u8, u8),
     base: Vec3,
     glow: Vec3,
@@ -196,6 +197,8 @@ pub struct View {
     pub forward: Vec3,
     pub right: (f32, f32),
     pub fog: Rgb,
+    pub texture_fog: Rgb,
+    pub fog_bands: u16,
     pub near: f32,
     pub far: f32,
     pub interior_bias: i32,
@@ -206,6 +209,21 @@ impl View {
     pub fn visible(&self, center: Vec3, radius: f32) -> bool {
         let offset = sub(center, self.position);
         length(offset) - radius < self.far && dot(offset, self.forward) > -radius
+    }
+
+    pub fn band(&self, distance: f32) -> u16 {
+        if self.fog_bands == 0 {
+            return 0;
+        }
+        let t = ((distance - self.near) / (self.far * 0.9 - self.near)).clamp(0.0, 1.0);
+        (t * (self.fog_bands - 1) as f32).round() as u16
+    }
+
+    pub fn band_amount(&self, band: u16) -> f32 {
+        if self.fog_bands < 2 {
+            return 0.0;
+        }
+        band as f32 / (self.fog_bands - 1) as f32
     }
 
     pub fn fog_amount(&self, distance: f32) -> f32 {
@@ -221,6 +239,18 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn draw(&self, renderer: &mut Renderer, view: &View, flicker: &[f32]) {
+        self.draw_lit(renderer, view, flicker, |_| [0.0; 3]);
+    }
+
+    pub fn draw_lit(
+        &self,
+        renderer: &mut Renderer,
+        view: &View,
+        flicker: &[f32],
+        extra: impl Fn(Vec3) -> Vec3,
+    ) {
+        let fog_enabled = renderer.fog_enabled;
+        renderer.fog_enabled = view.fog_bands == 0;
         for chunk in &self.chunks {
             if !view.visible(chunk.origin, chunk.radius) {
                 continue;
@@ -241,24 +271,44 @@ impl Mesh {
                 0
             };
             for face in &chunk.faces {
+                let band = if view.fog_bands > 0 && face.surface.texture.is_some() {
+                    let centre = scale(
+                        face.corners[..face.count]
+                            .iter()
+                            .fold([0.0; 3], |sum, corner| add(sum, corner.world)),
+                        1.0 / face.count as f32,
+                    );
+                    view.band(length(sub(centre, view.position)))
+                } else {
+                    0
+                };
+                let neutral = view.band_amount(band);
                 let mut points = [Point::default(); 4];
                 for (point, corner) in points.iter_mut().zip(&face.corners[..face.count]) {
                     let strength = flicker.get(corner.torch).copied().unwrap_or(1.0);
-                    let color = to_rgb(add(corner.base, scale(corner.glow, strength)));
+                    let lit = add(
+                        add(corner.base, scale(corner.glow, strength)),
+                        extra(corner.world),
+                    );
+                    let color = to_rgb(lit.map(|channel| channel + (128.0 - channel) * neutral));
                     *point = Point::new(corner.position, color, corner.uv);
                 }
                 let points = &points[..face.count];
                 if !face.double_sided && renderer.backface(points) {
                     continue;
                 }
-                let surface = if face.surface.texture.is_some() {
-                    face.surface.tinted(view.fog)
+                let mut surface = if face.surface.texture.is_some() {
+                    face.surface.tinted(view.texture_fog)
                 } else {
                     face.surface
                 };
+                if let Some(texture) = surface.texture.as_mut() {
+                    texture.clut.y += band;
+                }
                 renderer.polygon(points, surface, bias + face.bias, detail);
             }
         }
+        renderer.fog_enabled = fog_enabled;
     }
 }
 
@@ -563,6 +613,7 @@ fn lit_face(lighting: &Lighting, pending: &Pending, origin: Vec3) -> Face {
         let (u, v) = pending.uvs[index];
         corners[index] = Corner {
             position: local(positions[index], origin),
+            world: positions[index],
             uv: (
                 u.round().clamp(0.0, 255.0) as u8,
                 v.round().clamp(0.0, 255.0) as u8,

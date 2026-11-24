@@ -65,6 +65,24 @@ Variant `_0` comes from the unsuffixed source file, `_1` from `-2`, `_2` from `-
 | `coins_*` | `very_small_weathered_aztec_gold_coins_*` |
 | `coins_large` | `small_weathered_aztec_gold_coins_*` |
 
+These are converted by `wreck/make_wreck.py` in the same tools repo, with a shared grading pass so tones match:
+
+| Output | Source pattern |
+| --- | --- |
+| `sand_rippled_*` | `rippled_undersea_sand_*` |
+| `seabed_*` | `seabed_seamless_*` |
+| `reef_rock_*` | `undersea_rocky_surface_*` |
+| `rocks_dense_*` | `undersea_rocks_dense_*` |
+| `coral_*` | `sea_corals_dense_*` |
+| `hull_barnacle_*` | `barnacled_weathered_wreck_hull_plating_*` |
+| `hull_rust_*` | `rusted_weathered_undersea_wreck_hull_plating_*` |
+| `deck_*` | `worn_weathered_undersea_wreck_deck_planks_*` |
+| `kelp_*`, `kelp_clump_*`, `seaweed_*` | `tall_ocean_kelp_*`, `ocean_kelp_*`, `tall_ocean_seaweed_*` |
+| `fish_*` | individual fish cut from `ocean_fish_*` sheets |
+| `porthole_*`, `relic_*` | items cut from `portholes_and_sunken_wreck_decorations_*` and `weathered_sunken_wreck_fixtures_and_fittings_*` |
+| `flotsam_*` | items cut from `sea_flotsam_and_jetsam_*` |
+| `sign_oceanic` | cropped from `SS_Oceanic_Liverpool_1907_*-4` |
+
 These are converted by `jungle/make_rally_jungle.py` in the same tools repo:
 
 | Output | Source pattern |

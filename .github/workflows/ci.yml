@@ -47,3 +47,5 @@ jobs:
         run: trunk build --release
       - working-directory: web/temple
         run: trunk build --release
+      - working-directory: web/dive
+        run: trunk build --release
